@@ -1,0 +1,11 @@
+{
+  "name": "world-radio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "E-ink world radio — browser prototype of the globe visualization that ports to ESP32-S3",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs"
+  }
+}
