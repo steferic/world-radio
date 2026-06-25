@@ -2,15 +2,6 @@
   Wireframe Globe — ST7789 TFT
   -----------------------------------------------------------
   Spinning wireframe globe on a 240×320 ST7789 panel.
-
-  Required libraries (install via Arduino Library Manager):
-    - Adafruit GFX Library
-    - Adafruit ST7735 and ST7789 Libraries
-
-  TFT wiring:
-    TFT CS  → GPIO 5
-    TFT DC  → GPIO 2
-    TFT RST → GPIO 4
 */
 
 #include <Arduino.h>
@@ -18,16 +9,19 @@
 #include "config.h"
 #include "geometry.h"
 #include "display.h"
+#include "network.h"
 
 float currentSpin = 0;
 
 void setup() {
   Serial.begin(115200);
   delay(200);
+  wifiInit();
   displayInit();
 }
 
 void loop() {
+  wifiUpdate();
   for (int half = 0; half < 2; half++) {
     int yOffset = half * HALF_HEIGHT;
     halfCanvas->fillScreen(ST77XX_BLACK);

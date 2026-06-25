@@ -27,5 +27,8 @@
 #define COLOR_BACK   RGB565(50, 50, 50)
 #define COLOR_LIGHT_MODE false
 
+// Wifi
+#define WIFI_SSID "WIFISSID"
+#define WIFI_PASS "WIFIPASSWORD"
 
 #endif
