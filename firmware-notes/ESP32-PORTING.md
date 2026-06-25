@@ -1,98 +1,89 @@
-# Porting the globe to ESP32-S3 (color IPS build)
+# Porting the globe to ESP32-S3 (2.4" color SPI build)
 
-The browser prototype was written so the rendering is a straight port. This doc is the
-bridge from `src/projection.js` to firmware. **Hardware direction (chosen): a color
-RGB IPS panel, iPhone-ish size (5–7"), on an all-in-one ESP32-S3 board** — a low-power,
-instant-on appliance that shows the globe in color and eases (snaps + short animation)
-between stations.
+The browser prototype was written so the rendering is a straight port. This doc bridges
+`src/projection.js` to firmware. **Hardware direction (chosen): a small 2.4" color SPI
+LCD driven by a separate ESP32-S3 dev board** — a cheap, simple-to-wire appliance with a
+smooth color globe you spin between stations using a rotary knob.
 
-> Earlier this targeted a 1-bit B&W e-ink panel; that path is archived in git history.
-> The projection core is identical — only the framebuffer (1bpp → RGB565) and the
-> display driver change.
+> Earlier directions (1-bit B&W e-ink, then a 5–7" RGB all-in-one) are archived in git
+> history. The projection core is identical across all of them — only the framebuffer
+> and the display driver change.
 
 ## Bill of materials
 
 | Part | Recommendation | Notes |
 |---|---|---|
-| **MCU + display** | All-in-one **ESP32-S3 + 5–7″ 800×480 RGB IPS** board — e.g. Waveshare **ESP32-S3-Touch-LCD-5** (5″) or **-7** (7″); Elecrow **CrowPanel 5″/7″** | Integrates the RGB panel + ESP32-S3 (8 MB PSRAM / 16 MB flash) + capacitive touch on one board. 800×480 is the S3's practical color ceiling. |
-| **Audio amp** | **MAX98357A** (I2S, mono, 3 W) → speaker — *or* a board with **onboard audio** | ⚠️ See the GPIO note below: RGB panels eat most GPIOs. Prefer a board with onboard I2S audio, or confirm ≥3 free I2S-capable pins. |
-| **Speaker** | **3″ full-range 4 Ω driver in a small sealed enclosure** (Dayton Audio CE/ND) | The enclosure matters more than the chip. Bigger driver suits a 5–7″ device. |
-| **Input** | **Capacitive touch** (built into the board) and/or a **rotary encoder** (EC11) | Touch the globe/list to navigate; an encoder is the "radio knob" feel. Encoder needs 2–3 free GPIOs. |
-| **Power** | **USB-C 5 V** | RGB panel + backlight draws hundreds of mA, so this is a plugged-in appliance. Battery is possible but short-lived vs the old e-ink build. |
+| **MCU board** | **ESP32-S3-DevKitC-1 N16R8** (16 MB flash / 8 MB PSRAM, USB-C) | Separate from the screen. Its high pin count is why display + audio + a knob all fit. |
+| **Display** | **Waveshare 2.4" LCD Module** — ILI9341, 240×320, SPI, no touch | Screen-only; wires to the S3 over SPI. |
+| **Audio amp** | **MAX98357A** (I2S, mono, 3 W, DAC built in) | Trivial here — SPI leaves plenty of free GPIO. |
+| **Speaker** | **3" full-range 4 Ω driver in a small sealed enclosure** (Dayton Audio CE/ND) | The enclosure matters more than the chip. |
+| **Input** | **Rotary encoder (EC11, with push)** | Tune between stations + push to play/stop. This panel has no touch. |
+| **Power** | **USB-C 5 V** (on the DevKitC) | The amp can pull ~0.5–1 A at volume; don't undersize. |
 
-### ⚠️ The GPIO gotcha
-A parallel-RGB panel consumes ~**16 data + 5 control GPIOs**, leaving few free on the
-S3. Before buying, make sure the board either has **onboard I2S audio** (many HMI boards
-do) or **breaks out ≥3 free GPIOs** for the MAX98357A (BCLK/LRCLK/DIN) — plus a couple
-more if you add a rotary encoder. This is the #1 thing that trips up RGB-board audio.
+## Wiring — no GPIO contention (the upside of SPI)
+
+| Bus | Pins | Count |
+|---|---|---|
+| SPI LCD | SCK, MOSI, CS, DC, RST, BL (+ 3V3/GND) — MISO unused (display-only) | ~6 |
+| I2S audio | BCLK, LRC, DIN | 3 |
+| Encoder | A, B, SW | 3 |
+
+~12 GPIO of the DevKitC's 30+ → fits comfortably. (This is exactly the pin pressure that
+made the big RGB-parallel panel awkward; SPI sidesteps it.)
 
 ## Software stack
 
-- **Framework:** Arduino-ESP32 (these boards ship Arduino/ESP-IDF + LVGL examples and a
-  board-support package). ESP-IDF works too.
-- **Display + UI:** the board's **LVGL** BSP. Render the globe into an LVGL canvas / an
-  RGB565 buffer; let LVGL handle the chrome (station list, now-playing, labels).
+- **Framework:** Arduino-ESP32 (or ESP-IDF).
+- **Display driver:** [`LovyanGFX`](https://github.com/lovyan03/LovyanGFX) or
+  [`TFT_eSPI`](https://github.com/Bodmer/TFT_eSPI) for the ILI9341 (DMA SPI). Rust:
+  [`mipidsi`](https://crates.io/crates/mipidsi).
 - **Audio streaming:** [`ESP32-audioI2S`](https://github.com/schreibfaul1/ESP32-audioI2S)
-  — `audio.connecttohost("http://stream...")` handles Icecast/Shoutcast MP3/AAC straight
-  to I2S. Internet-radio-on-ESP32 is well-trodden.
-- **JSON (live stations):** `ArduinoJson` to parse radio-browser.info.
+  — `audio.connecttohost("http://stream...")` → I2S. Internet-radio-on-ESP32 is well-trodden.
+- **JSON (live stations):** `ArduinoJson` for radio-browser.info.
 
 ## How the prototype maps to the chip
 
 ### Framebuffer (`projection.js` → C)
-- The render target is now an **RGB565 framebuffer in PSRAM** (800×480×2 = **768 KB**;
-  double-buffer if you want tear-free updates → ~1.5 MB). `setPixel` writes a `uint16_t`.
-- `project()` / `makeCenter()` and the line/circle rasterizers **port verbatim** (pure
-  math; the S3 has hardware float). Colors come straight from your palette
-  (coast/border/land/marker), same as the terminal app's color mode.
+- Target is an **RGB565 framebuffer, 240×320 (~150 KB)** — small enough for internal RAM,
+  pushed to the panel via **DMA SPI**. `setPixel` writes a `uint16_t`.
+- `project()` / `makeCenter()` and the line/circle rasterizers **port verbatim**; colors
+  come from your palette (filled land + coastlines + colored markers — like the
+  `terminal-radio` color mode).
 
-### Geo data — use the *coarse* set on-device
-- Bake **110m** coastline (~5 k points) to a C header (`coastline.h`, ~20 KB), **not**
-  the 50m set. At ~440 px the S3 can't redraw 60 k segments per frame; 110m keeps
-  per-frame line drawing affordable.
-- Optional filled land via a baked `land.h` + the `is_land` point-in-polygon test, or
-  texture-map an equirectangular earth bitmap (per-pixel lookup) for photographic
-  continents.
+### Geo data — coarse on-device
+- Bake **110m** coastline (~5 k points) to `coastline.h` (~20 KB). The 50m set is overkill
+  for a 240 px globe and too heavy to redraw per frame on the S3.
 
-### Display loop (be realistic about framerate)
-- Layout (landscape 800×480): globe as a ~**440 px circle on the left**, station list +
-  now-playing + controls in the right ~340 px column — same as the browser/terminal.
-- A full-screen procedural globe redraw is heavy on the S3, so **ease then rest**: animate
-  the rotation toward the selected station over ~0.5 s at ~10–15 fps, then hold static.
-  Keep the spinning render modest (smaller internal size / coarse data) and it feels good
-  without needing 60 fps. CPU is then free for audio while resting.
+### Display loop
+- Globe as a ~**220 px circle** centered (or left, with a slim station strip). At this size
+  the S3 can **ease the rotation smoothly** toward the selected station, then hold static —
+  freeing the CPU for audio while a station plays.
 
 ### Audio
-- WiFi → `audio.connecttohost(station.url)` → I2S → MAX98357A (or onboard amp) → speaker.
-- Runs continuously while the globe is static (between navigations).
+- WiFi → `audio.connecttohost(station.url)` → I2S → MAX98357A → speaker.
 
 ### Stations
 - Ship a curated table in flash; optionally fetch radio-browser.info over HTTPS at boot
-  (ArduinoJson) and cache to **NVS**. Reuse the verify idea from `terminal-radio` if you
-  want only-working streams (an HTTP/byte probe; full ffprobe isn't available on-device).
+  (ArduinoJson), cache to **NVS**. (Reuse the verify idea from `terminal-radio`; a simple
+  HTTP/byte probe on-device, since ffprobe isn't available.)
+
+### Input
+- Encoder ISR increments/decrements `selectedStation`; push toggles play/stop.
 
 ## Memory budget (8 MB PSRAM)
 
 | Item | Size |
 |---|---|
-| RGB565 framebuffer (800×480) | 768 KB (×2 if double-buffered) |
+| RGB565 framebuffer (240×320) | ~150 KB |
 | Coastline (110m) table | ~20 KB |
 | Station table | < 10 KB |
-| Audio decode + ring buffers | hundreds of KB |
-
-Comfortable on an 8 MB-PSRAM S3 — which the all-in-one boards have.
+| Audio decode + ring buffers | hundreds of KB → PSRAM |
 
 ## Suggested bring-up order
 
-1. Flash the board's **LVGL "hello world"** — confirm the panel + touch work.
-2. Wire/confirm **audio** (onboard or MAX98357A) and stream one hard-coded station with
-   `ESP32-audioI2S`. (Do this early — the GPIO gotcha is easier to catch now.)
-3. Port `projection.c` + `coastline.h`; draw **one static color globe frame** into the
-   RGB565 buffer. Proves the visual port.
-4. Add eased rotation + station selection (touch and/or encoder).
-5. Add radio-browser fetch + NVS caching.
+1. **LovyanGFX/TFT_eSPI "hello world"** on the 2.4" LCD — confirm SPI wiring.
+2. Wire the **MAX98357A** and stream one hard-coded station (`ESP32-audioI2S`).
+3. Port `projection.c` + `coastline.h`; draw **one static color globe frame**.
+4. Add eased rotation + **encoder** navigation.
+5. radio-browser fetch + NVS caching.
 6. Enclosure + speaker box.
-
-## Open sub-choices
-- **5″ vs 7″** panel (both 800×480 — same firmware, just enclosure size).
-- **Touch vs rotary encoder vs both** for navigation.
