@@ -11,7 +11,9 @@
 // Loaded as a classic script; exposed as window.STATIONS.
 
 window.STATIONS = [
-  { name: 'SomaFM Groove Salad', city: 'San Francisco', country: 'US', lon: -122.42, lat: 37.77, genre: 'ambient', url: 'https://ice2.somafm.com/groovesalad-128-mp3' },
+  // Note: SomaFM's direct mounts now block browser-originated requests (hotlink
+  // protection), so the SF slot is KQED, which streams with CORS happily.
+  { name: 'KQED', city: 'San Francisco', country: 'US', lon: -122.42, lat: 37.77, genre: 'public', url: 'https://streams.kqed.org/kqedradio' },
   { name: 'Radio Paradise Main', city: 'Paradise, CA', country: 'US', lon: -121.62, lat: 39.76, genre: 'eclectic', url: 'https://stream.radioparadise.com/mp3-128' },
   { name: 'KEXP', city: 'Seattle', country: 'US', lon: -122.33, lat: 47.61, genre: 'indie', url: 'https://kexp.streamguys1.com/kexp160.aac' },
   { name: 'Newsradio', city: 'New York', country: 'US', lon: -74.01, lat: 40.71, genre: 'talk', url: '' },
