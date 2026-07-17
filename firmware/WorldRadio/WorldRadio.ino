@@ -14,6 +14,8 @@
 #include <Audio.h> // schreibfaul1/ESP32-audioI2S
 
 #include "config.h"
+#include "projection.h" // the portable projection core (types live here so the
+                        // Arduino preprocessor's auto-prototypes compile)
 #include "coastline.h"
 #include "stations.h"
 
@@ -80,48 +82,12 @@ static constexpr int GLOBE_R = 104;
 static constexpr int BAR_Y = 254; // station info bar
 
 // ---------------------------------------------------------------------------
-// Projection core (port of src/projection.js)
+// Rendering (projection math lives in projection.h)
 // ---------------------------------------------------------------------------
 
-struct Center {
-  float lon, lat, sinLat, cosLat;
-};
-
-static Center makeCenter(float lonDeg, float latDeg) {
-  Center c;
-  c.lon = lonDeg * DEG_TO_RAD;
-  c.lat = latDeg * DEG_TO_RAD;
-  c.sinLat = sinf(c.lat);
-  c.cosLat = cosf(c.lat);
-  return c;
-}
-
-struct Proj {
-  float x, y;
-  bool front;
-};
-
-// Orthographic azimuthal projection — identical math to the JS/Rust versions.
+// Project onto this screen's globe placement.
 static Proj project(float lonDeg, float latDeg, const Center &c) {
-  float lon = lonDeg * DEG_TO_RAD;
-  float lat = latDeg * DEG_TO_RAD;
-  float dlon = lon - c.lon;
-  float cosLatP = cosf(lat), sinLatP = sinf(lat), cosDlon = cosf(dlon);
-  float cosc = c.sinLat * sinLatP + c.cosLat * cosLatP * cosDlon;
-  float x = cosLatP * sinf(dlon);
-  float y = c.cosLat * sinLatP - c.sinLat * cosLatP * cosDlon;
-  Proj p;
-  p.x = GLOBE_CX + GLOBE_R * x;
-  p.y = GLOBE_CY - GLOBE_R * y;
-  p.front = cosc >= 0.0f;
-  return p;
-}
-
-static float shortestLonDelta(float from, float to) {
-  float d = fmodf(to - from, 360.0f);
-  if (d > 180.0f) d -= 360.0f;
-  if (d < -180.0f) d += 360.0f;
-  return d;
+  return projectTo(lonDeg, latDeg, c, GLOBE_CX, GLOBE_CY, GLOBE_R);
 }
 
 static void drawPolylineCenti(const int16_t *pts, int n, const Center &c, uint16_t color) {

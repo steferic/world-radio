@@ -42,6 +42,8 @@ Full wiring rationale: `../firmware-notes/ESP32-PORTING.md`.
    - **Board:** ESP32S3 Dev Module
    - **PSRAM:** OPI PSRAM  ← important (N16R8 is octal PSRAM)
    - **Flash Size:** 16MB
+   - **Partition Scheme:** 16M Flash (3MB APP/9.9MB FATFS)  ← important — the
+     firmware is ~2 MB, bigger than the default 1.25 MB app partition
    - **USB CDC On Boot:** Enabled (so `Serial` prints over the USB port)
    - **Port:** the board's USB port
 4. **Upload** (→ arrow). The IDE compiles the binary and flashes it.
