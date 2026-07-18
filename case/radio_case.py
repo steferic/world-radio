@@ -301,5 +301,7 @@ if __name__ == "__main__":
     build_scene()
     if "stl" in args:
         export_stl()
+    if "blend" in args:
+        bpy.ops.wm.save_as_mainfile(filepath=f"{OUT_DIR}/radio_case.blend")
     if "render" in args or not args:
         render(f"{OUT_DIR}/concept.png")
