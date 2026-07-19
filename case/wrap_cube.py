@@ -24,9 +24,9 @@ CORE = 55.0        # core half-edge
 CORE_R = 7.0       # core corner rounding
 T = 2.0            # ribbon thickness (thin!)
 CLEAR = 0.3        # ribbon-to-core clearance
-RIBBON_HALF = 44.0 # ribbon half-width (cube half is 55 -> 11mm black margin at edges)
-CREAM_TOP = 36.0   # cream front/back legs rise to here (black strip + wheel above)
-MUST_BOT = -36.0   # mustard side legs end here (black strip below)
+RIBBON_HALF = 48.0 # ribbon half-width = full flat face width (black shows on the edge arcs)
+CREAM_TOP = 48.0   # cream legs run to the top edge arc of their faces
+MUST_BOT = -48.0   # mustard legs run to the bottom edge arc
 
 
 def mm(v):
@@ -142,28 +142,6 @@ def build():
 
     # ---- smoothly rounded black core ----
     core = rounded_cube("Core", CORE, CORE_R)
-    # grille perforation on the right-front zone (revealed by the ribbon window)
-    holes = []
-    gr_y0, gr_y1, gr_z0, gr_z1 = -34.0, -2.0, -30.0, 22.0
-    pitch = 6.0
-    row = 0
-    z = gr_z0 + 4
-    while z <= gr_z1 - 4:
-        yoff = (pitch / 2) if (row % 2) else 0.0
-        y = gr_y0 + 4 + yoff
-        while y <= gr_y1 - 4:
-            c = add_cyl("h", 1.8, 10, loc=(mm(CORE - 2), mm(y), mm(z)),
-                        rot=(0, math.radians(90), 0), verts=12)
-            holes.append(c)
-            y += pitch
-        z += pitch * 0.866
-        row += 1
-    bpy.ops.object.select_all(action="DESELECT")
-    for c in holes:
-        c.select_set(True)
-    bpy.context.view_layer.objects.active = holes[0]
-    bpy.ops.object.join()
-    boolean(core, bpy.context.object)
     smooth(core)
     assign(core, black)
 
@@ -176,6 +154,9 @@ def build():
     scz = -10.0
     win = boxmm("win", -sw2, sw2, -OUTER - 2, -CORE + 1, scz - sh2, scz + sh2)
     boolean(cream_rib, win)
+    # slot revealing the black core + brass thumbwheel
+    slot = boxmm("slot", 2.0, 38.0, -OUTER - 2, -CORE + 1, 33.0, 47.0)
+    boolean(cream_rib, slot)
     bevel(cream_rib, 0.7, segments=4)
     smooth(cream_rib)
     assign(cream_rib, cream)
@@ -187,16 +168,34 @@ def build():
     must_rib = make_ribbon("MustardRibbon", "y")
     region2 = boxmm("reg2", -OUTER - 2, OUTER + 2, -RIBBON_HALF, RIBBON_HALF, MUST_BOT, OUTER + 2)
     intersect(must_rib, region2)
-    # rounded grille window in the right leg
-    gwin = boxmm("gwin", CORE - 1, OUTER + 2, gr_y0 - 2, gr_y1 + 2, gr_z0 - 2, gr_z1 + 2)
-    bevel(gwin, 6.0, segments=6)
-    boolean(must_rib, gwin)
+    # speaker grille: perforate the ENTIRE right leg (holes through the shell)
+    gh = []
+    pitch = 6.0
+    row = 0
+    z = -44.0
+    while z <= 44.0:
+        yoff = (pitch / 2) if (row % 2) else 0.0
+        y = -44.0 + yoff
+        while y <= 44.0:
+            if abs(y) <= 44.0 and MUST_BOT + 4 <= z <= 44.0:
+                c = add_cyl("h", 1.8, 8, loc=(mm(CORE + CLEAR + T / 2), mm(y), mm(z)),
+                            rot=(0, math.radians(90), 0), verts=12)
+                gh.append(c)
+            y += pitch
+        z += pitch * 0.866
+        row += 1
+    bpy.ops.object.select_all(action="DESELECT")
+    for c in gh:
+        c.select_set(True)
+    bpy.context.view_layer.objects.active = gh[0]
+    bpy.ops.object.join()
+    boolean(must_rib, bpy.context.object)
     bevel(must_rib, 0.7, segments=4)
     smooth(must_rib)
     assign(must_rib, mustard)
 
     # ---- thin brass thumbwheel on the bare top-front strip ----
-    kz = 44.0
+    kz = 40.0
     wheel = add_cyl("Wheel", 5.5, 20.0, loc=(mm(20), mm(-CORE + 1.5), mm(kz)),
                     rot=(0, math.radians(90), 0), verts=48)
     bevel(wheel, 0.7, segments=3, angle_limit=40)
@@ -208,7 +207,7 @@ def build():
                     rot=(0, math.radians(90), 0), verts=8)
         boolean(wheel, g)
     # pocket so the wheel reads seated in the core
-    pocket = boxmm("pocket", 6.0, 34.0, -CORE - 1, -CORE + 4, kz - 7.0, kz + 7.0)
+    pocket = boxmm("pocket", 4.0, 36.0, -CORE - 1, -CORE + 4, 33.5, 46.5)
     boolean(core, pocket)
 
     # ---- studio ----
