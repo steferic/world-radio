@@ -17,13 +17,12 @@ OUT_DIR = "/Users/stefanlenoach/Code/world-radio/case"
 S = 0.001
 
 # ---- master dimensions (mm, absolute; origin at core center) ----
-CORE = 55.0     # core half-edge: core spans [-55, 55] in x/y/z
-SHELL_OUT = 63.0  # outer plane of the wrap shells (8mm thick over the core)
-SIDE_OUT = 57.5   # shells' footprint half-width in x (frames the side faces)
-TOP_UNDER = 43.0  # underside of the mustard top slab
-TOP_OUT = 61.0    # top of the mustard slab
-FRONT_TOP = 22.0  # top edge of the cream front plate
-BACK_BOT = -20.0  # bottom edge of the mustard back plate
+CORE = 55.0      # core half-edge: core spans [-55, 55] in x/y/z
+T = 4.0          # shell thickness (thin, like bent plastic)
+OUT = CORE + T   # outer plane of a shell leg (59)
+CREAM_W = 57.0   # cream U half-width in x (slightly proud of core sides)
+LEG_TOP = 34.0   # top edge of the cream front/back legs
+MLEG_BOT = -40.0 # bottom edge of the mustard side legs (black reveal below)
 
 
 def mm(v):
@@ -106,9 +105,9 @@ def assign(ob, mat):
 def build():
     clean_scene()
 
-    black = material("Core", (0.008, 0.008, 0.009), rough=0.62)
+    black = material("Core", (0.004, 0.004, 0.005), rough=0.62)
     cream = material("Cream", (0.902, 0.868, 0.792), rough=0.5)
-    mustard = material("Mustard", (0.58, 0.365, 0.045), rough=0.45)
+    mustard = material("Mustard", (0.55, 0.33, 0.02), rough=0.45)
     dark = material("Dark", (0.004, 0.004, 0.005), rough=0.55)
     brass = material("Brass", (0.85, 0.64, 0.29), rough=0.28, metallic=1.0)
 
@@ -117,8 +116,34 @@ def build():
     bevel(core, 1.0)
     assign(core, black)
 
-    # speaker grille: hex holes in the right-side face
-    gr, pitch = 26.0, 6.0
+    # ---- cream U: front -> bottom -> back (3 faces, rounded bends) ----
+    frontleg = boxmm("CreamShell", -CREAM_W, CREAM_W, -OUT, -CORE, -OUT, LEG_TOP)
+    bottomleg = boxmm("cb", -CREAM_W, CREAM_W, -OUT, OUT, -OUT, -CORE)
+    backleg = boxmm("cb2", -CREAM_W, CREAM_W, CORE, OUT, -OUT, LEG_TOP)
+    union(frontleg, bottomleg)
+    union(frontleg, backleg)
+    bevel(frontleg, 2.0, segments=6)
+    assign(frontleg, cream)
+    front = frontleg
+
+    # screen window through the cream front leg; dark glass against the core
+    sw2, sh2 = 38.5 / 2, 51.0 / 2
+    scz = -12.0
+    win = boxmm("win", -sw2, sw2, -OUT - 2, -CORE + 1, scz - sh2, scz + sh2)
+    boolean(front, win)
+    glass = boxmm("Screen", -sw2 - 1.5, sw2 + 1.5, -CORE - 0.9, -CORE + 0.5,
+                  scz - sh2 - 1.5, scz + sh2 + 1.5)
+    assign(glass, dark)
+
+    # ---- mustard U: left -> top -> right (3 faces, rounded bends) ----
+    topleg = boxmm("MustardShell", -OUT, OUT, -CREAM_W, CREAM_W, CORE, OUT)
+    leftleg = boxmm("ml", -OUT, -CORE, -CREAM_W, CREAM_W, MLEG_BOT, CORE)
+    rightleg = boxmm("mr", CORE, OUT, -CREAM_W, CREAM_W, MLEG_BOT, CORE)
+    union(topleg, leftleg)
+    union(topleg, rightleg)
+
+    # speaker grille: perforate the mustard right leg (black core shows through)
+    gr, pitch = 24.0, 6.2
     cutters = []
     row, v = 0, -gr
     while v <= gr:
@@ -126,7 +151,7 @@ def build():
         u = -gr + yoff
         while u <= gr:
             if math.hypot(u, v) <= gr - 1.5:
-                c = add_cyl("h", 1.8, 14, loc=(mm(CORE - 2), mm(u), mm(v - 6)),
+                c = add_cyl("h", 1.9, 14, loc=(mm(CORE + T / 2), mm(u), mm(v + 2)),
                             rot=(0, math.radians(90), 0), verts=12)
                 cutters.append(c)
             u += pitch
@@ -137,46 +162,26 @@ def build():
         c.select_set(True)
     bpy.context.view_layer.objects.active = cutters[0]
     bpy.ops.object.join()
-    boolean(core, bpy.context.object)
+    boolean(topleg, bpy.context.object)
 
-    # ---- cream shell: front plate + bottom plate (one L, unioned) ----
-    front = boxmm("CreamShell", -SIDE_OUT, SIDE_OUT, -SHELL_OUT, -CORE, -SHELL_OUT, FRONT_TOP)
-    bottom = boxmm("cb", -SIDE_OUT, SIDE_OUT, -SHELL_OUT, CORE, -SHELL_OUT, -CORE)
-    union(front, bottom)
-    bevel(front, 1.3)
-    assign(front, cream)
-
-    # screen window through the cream front; dark glass against the core
-    sw2, sh2 = 38.5 / 2, 51.0 / 2
-    scz = -14.0
-    win = boxmm("win", -sw2, sw2, -SHELL_OUT - 2, -CORE + 1, scz - sh2, scz + sh2)
-    boolean(front, win)
-    glass = boxmm("Screen", -sw2 - 1.5, sw2 + 1.5, -CORE - 0.9, -CORE + 0.5,
-                  scz - sh2 - 1.5, scz + sh2 + 1.5)
-    assign(glass, dark)
-
-    # ---- mustard shell: top slab + back plate (one inverted L, unioned) ----
-    top = boxmm("MustardShell", -SIDE_OUT, SIDE_OUT, -SHELL_OUT, SHELL_OUT, TOP_UNDER, TOP_OUT)
-    backp = boxmm("mb", -SIDE_OUT, SIDE_OUT, CORE, SHELL_OUT, BACK_BOT, TOP_UNDER)
-    union(top, backp)
-    bevel(top, 1.5)
-    assign(top, mustard)
+    bevel(topleg, 2.0, segments=6)
+    assign(topleg, mustard)
 
     # ---- brass thumbwheel in the top-front black channel [FRONT_TOP, TOP_UNDER] ----
-    kz = (FRONT_TOP + TOP_UNDER) / 2
-    wheel = add_cyl("Wheel", 10.0, 28.0, loc=(mm(24), mm(-CORE + 4), mm(kz)),
+    kz = (LEG_TOP + CORE) / 2
+    wheel = add_cyl("Wheel", 9.0, 28.0, loc=(mm(24), mm(-CORE + 3), mm(kz)),
                     rot=(0, math.radians(90), 0), verts=48)
     bevel(wheel, 1.3, segments=3, angle_limit=40)
     assign(wheel, brass)
     for i in range(20):
         a = i * (2 * math.pi / 20)
         g = add_cyl("g", 0.7, 34,
-                    loc=(mm(24), mm(-CORE + 4) + math.cos(a) * mm(10), mm(kz) + math.sin(a) * mm(10)),
+                    loc=(mm(24), mm(-CORE + 3) + math.cos(a) * mm(9), mm(kz) + math.sin(a) * mm(9)),
                     rot=(0, math.radians(90), 0), verts=8)
         boolean(wheel, g)
 
     # ---- studio ----
-    floor_z = -SHELL_OUT
+    floor_z = -OUT
     bpy.ops.mesh.primitive_plane_add(size=2.5, location=(0, 0.5, mm(floor_z) - 0.0005))
     bg = bpy.context.object
     bm = bmesh.new()
