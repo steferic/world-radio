@@ -1,12 +1,14 @@
-# wrap_cube.py — World Radio in the Sony TR-1825 cube language, v3.
+# wrap_cube.py — World Radio in the Sony TR-1825 cube language, v4.
 #
-# Two thin U-shells on a SHARED outer envelope (every face flush, parting lines
-# are 0.8mm shadow seams), wrapping a black core:
-#   cream U:   front -> bottom -> back
-#   mustard U: left  -> top    -> right, with a fold-down front/back lip
-# Black does the work: a slim shaded channel under the front lip carries a
-# mostly-buried brass thumbwheel; a rounded window in the mustard right leg
-# reveals a black perforated grille zone on the core.
+# A smoothly-rounded black core cube with two THIN (2mm) wrap ribbons that each
+# cover 3 faces and are NARROWER than the cube, so black core shows at every
+# edge and corner:
+#   cream ribbon:   front -> bottom -> back   (|x| <= RIBBON_HALF)
+#   mustard ribbon: left  -> top    -> right  (|y| <= RIBBON_HALF)
+# The ribbons are built as (rounded outer shell − rounded inner shell) ∩ band,
+# which guarantees uniform thickness, matched rounded bends, and zero overlap.
+# Black does the work: thumbwheel on the bare top-front strip, grille window in
+# the mustard right leg revealing perforated core, screen in the cream front.
 #
 #   /Applications/Blender.app/Contents/MacOS/Blender --background --python wrap_cube.py
 
@@ -18,12 +20,13 @@ OUT_DIR = "/Users/stefanlenoach/Code/world-radio/case"
 S = 0.001
 
 # ---- master dimensions (mm, absolute; origin at core center) ----
-CORE = 55.0      # core half-edge
-T = 4.0          # shell thickness
-OUT = CORE + T   # shared outer envelope: everything's outer face lands on ±59
-SEAM = 0.8       # shadow gap where shells butt
-LEG_TOP = 36.0   # cream front/back legs rise to here
-LIP_BOT = 48.0   # mustard fold-down lip reaches down to here (channel 36..48)
+CORE = 55.0        # core half-edge
+CORE_R = 7.0       # core corner rounding
+T = 2.0            # ribbon thickness (thin!)
+CLEAR = 0.3        # ribbon-to-core clearance
+RIBBON_HALF = 44.0 # ribbon half-width (cube half is 55 -> 11mm black margin at edges)
+CREAM_TOP = 36.0   # cream front/back legs rise to here (black strip + wheel above)
+MUST_BOT = -36.0   # mustard side legs end here (black strip below)
 
 
 def mm(v):
@@ -57,19 +60,9 @@ def add_cyl(name, r, depth, loc=(0, 0, 0), rot=(0, 0, 0), verts=64):
     return ob
 
 
-def boolean(target, cutter):
+def _bool(target, other, op):
     mod = target.modifiers.new(name="bool", type="BOOLEAN")
-    mod.operation = "DIFFERENCE"
-    mod.object = cutter
-    mod.solver = "EXACT"
-    bpy.context.view_layer.objects.active = target
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-    bpy.data.objects.remove(cutter, do_unlink=True)
-
-
-def union(target, other):
-    mod = target.modifiers.new(name="bool", type="BOOLEAN")
-    mod.operation = "UNION"
+    mod.operation = op
     mod.object = other
     mod.solver = "EXACT"
     bpy.context.view_layer.objects.active = target
@@ -77,7 +70,15 @@ def union(target, other):
     bpy.data.objects.remove(other, do_unlink=True)
 
 
-def bevel(ob, width_mm, segments=6, angle_limit=60):
+def boolean(target, cutter):
+    _bool(target, cutter, "DIFFERENCE")
+
+
+def intersect(target, region):
+    _bool(target, region, "INTERSECT")
+
+
+def bevel(ob, width_mm, segments=8, angle_limit=60):
     mod = ob.modifiers.new(name="bevel", type="BEVEL")
     mod.width = mm(width_mm)
     mod.segments = segments
@@ -85,6 +86,16 @@ def bevel(ob, width_mm, segments=6, angle_limit=60):
     mod.angle_limit = math.radians(angle_limit)
     bpy.context.view_layer.objects.active = ob
     bpy.ops.object.modifier_apply(modifier=mod.name)
+
+
+def smooth(ob):
+    bpy.ops.object.select_all(action="DESELECT")
+    ob.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    try:
+        bpy.ops.object.shade_auto_smooth(angle=0.7)
+    except Exception:
+        bpy.ops.object.shade_smooth()
 
 
 def material(name, color, rough=0.45, metallic=0.0):
@@ -102,119 +113,120 @@ def assign(ob, mat):
     ob.data.materials.append(mat)
 
 
-def hex_holes(region_y0, region_y1, region_z0, region_z1, hole_r, pitch, x_center, margin=4.0):
-    """Joined hex-packed cylinder cutters (axis X) filling a rectangular region."""
-    cutters = []
-    row = 0
-    z = region_z0 + margin
-    while z <= region_z1 - margin:
-        yoff = (pitch / 2) if (row % 2) else 0.0
-        y = region_y0 + margin + yoff
-        while y <= region_y1 - margin:
-            c = add_cyl("h", hole_r, 10, loc=(mm(x_center), mm(y), mm(z)),
-                        rot=(0, math.radians(90), 0), verts=12)
-            cutters.append(c)
-            y += pitch
-        z += pitch * 0.866
-        row += 1
-    bpy.ops.object.select_all(action="DESELECT")
-    for c in cutters:
-        c.select_set(True)
-    bpy.context.view_layer.objects.active = cutters[0]
-    bpy.ops.object.join()
-    return bpy.context.object
+def rounded_cube(name, half, r):
+    ob = boxmm(name, -half, half, -half, half, -half, half)
+    bevel(ob, r, segments=10)
+    return ob
+
+
+def make_ribbon(name, band_axis):
+    """Uniform 2mm shell over the rounded core, limited to a 3-face band.
+    band_axis 'x': |x|<=RIBBON_HALF band wrapping front/bottom/back is made by
+    the caller's region box; here we just produce outer-minus-inner."""
+    outer = rounded_cube(name, CORE + CLEAR + T, CORE_R + CLEAR + T)
+    inner = rounded_cube("inner", CORE + CLEAR, CORE_R + CLEAR)
+    boolean(outer, inner)
+    return outer
 
 
 def build():
     clean_scene()
 
-    black = material("Core", (0.004, 0.004, 0.005), rough=0.62)
+    black = material("Core", (0.004, 0.004, 0.005), rough=0.6)
     cream = material("Cream", (0.902, 0.868, 0.792), rough=0.5)
     mustard = material("Mustard", (0.55, 0.33, 0.02), rough=0.45)
     dark = material("Dark", (0.003, 0.003, 0.004), rough=0.45)
     brass = material("Brass", (0.85, 0.64, 0.29), rough=0.28, metallic=1.0)
 
-    # ---- black core ----
-    core = boxmm("Core", -CORE, CORE, -CORE, CORE, -CORE, CORE)
+    OUTER = CORE + CLEAR + T  # 57.3 outer envelope
 
-    # grille perforation on the core's right-front zone (revealed by the shell window)
-    holes = hex_holes(-40.0, -8.0, -36.0, 24.0, 1.8, 6.0, CORE - 2.0)
-    boolean(core, holes)
-    # wheel pocket in the core's top-front edge
-    pocket = boxmm("pocket", 8.0, 40.0, -CORE - 1, -CORE + 5, LEG_TOP + 0.5, LIP_BOT - 0.5)
-    boolean(core, pocket)
-    bevel(core, 1.0, segments=3)
+    # ---- smoothly rounded black core ----
+    core = rounded_cube("Core", CORE, CORE_R)
+    # grille perforation on the right-front zone (revealed by the ribbon window)
+    holes = []
+    gr_y0, gr_y1, gr_z0, gr_z1 = -34.0, -2.0, -30.0, 22.0
+    pitch = 6.0
+    row = 0
+    z = gr_z0 + 4
+    while z <= gr_z1 - 4:
+        yoff = (pitch / 2) if (row % 2) else 0.0
+        y = gr_y0 + 4 + yoff
+        while y <= gr_y1 - 4:
+            c = add_cyl("h", 1.8, 10, loc=(mm(CORE - 2), mm(y), mm(z)),
+                        rot=(0, math.radians(90), 0), verts=12)
+            holes.append(c)
+            y += pitch
+        z += pitch * 0.866
+        row += 1
+    bpy.ops.object.select_all(action="DESELECT")
+    for c in holes:
+        c.select_set(True)
+    bpy.context.view_layer.objects.active = holes[0]
+    bpy.ops.object.join()
+    boolean(core, bpy.context.object)
+    smooth(core)
     assign(core, black)
 
-    # ---- cream U: front / bottom / back — outer faces all on the envelope ----
-    cfront = boxmm("CreamShell", -OUT, OUT, -OUT, -CORE, -OUT, LEG_TOP)
-    cbot = boxmm("cb", -OUT, OUT, -OUT, OUT, -OUT, -CORE)
-    cback = boxmm("cb2", -OUT, OUT, CORE, OUT, -OUT, LEG_TOP)
-    union(cfront, cbot)
-    union(cfront, cback)
-
-    # screen aperture: shallow step recess + through window, glass on the core
+    # ---- cream ribbon: front -> bottom -> back ----
+    cream_rib = make_ribbon("CreamRibbon", "x")
+    region = boxmm("reg", -RIBBON_HALF, RIBBON_HALF, -OUTER - 2, OUTER + 2, -OUTER - 2, CREAM_TOP)
+    intersect(cream_rib, region)
+    # screen aperture through the front leg
     sw2, sh2 = 38.5 / 2, 51.0 / 2
-    scz = -12.0
-    step = boxmm("step", -sw2 - 2, sw2 + 2, -OUT - 1, -OUT + 1.6, scz - sh2 - 2, scz + sh2 + 2)
-    boolean(cfront, step)
-    win = boxmm("win", -sw2, sw2, -OUT - 2, -CORE + 1, scz - sh2, scz + sh2)
-    boolean(cfront, win)
-    bevel(cfront, 2.5)
-    assign(cfront, cream)
-    glass = boxmm("Screen", -sw2 - 1.5, sw2 + 1.5, -CORE - 0.7, -CORE + 0.5,
+    scz = -10.0
+    win = boxmm("win", -sw2, sw2, -OUTER - 2, -CORE + 1, scz - sh2, scz + sh2)
+    boolean(cream_rib, win)
+    bevel(cream_rib, 0.7, segments=4)
+    smooth(cream_rib)
+    assign(cream_rib, cream)
+    glass = boxmm("Screen", -sw2 - 1.5, sw2 + 1.5, -CORE - 0.6, -CORE + 0.5,
                   scz - sh2 - 1.5, scz + sh2 + 1.5)
     assign(glass, dark)
 
-    # ---- mustard U: left / top / right + fold-down lips, flush on the envelope ----
-    mtop = boxmm("MustardShell", -OUT, OUT, -OUT, OUT, CORE, OUT)
-    lip_f = boxmm("lipf", -OUT, OUT, -OUT, -CORE, LIP_BOT, CORE)
-    lip_b = boxmm("lipb", -OUT, OUT, CORE, OUT, LIP_BOT, CORE)
-    mleft = boxmm("ml", -OUT, -CORE, -CORE + SEAM, CORE - SEAM, -CORE + SEAM, CORE)
-    mright = boxmm("mr", CORE, OUT, -CORE + SEAM, CORE - SEAM, -CORE + SEAM, CORE)
-    union(mtop, lip_f)
-    union(mtop, lip_b)
-    union(mtop, mleft)
-    union(mtop, mright)
+    # ---- mustard ribbon: left -> top -> right ----
+    must_rib = make_ribbon("MustardRibbon", "y")
+    region2 = boxmm("reg2", -OUTER - 2, OUTER + 2, -RIBBON_HALF, RIBBON_HALF, MUST_BOT, OUTER + 2)
+    intersect(must_rib, region2)
+    # rounded grille window in the right leg
+    gwin = boxmm("gwin", CORE - 1, OUTER + 2, gr_y0 - 2, gr_y1 + 2, gr_z0 - 2, gr_z1 + 2)
+    bevel(gwin, 6.0, segments=6)
+    boolean(must_rib, gwin)
+    bevel(must_rib, 0.7, segments=4)
+    smooth(must_rib)
+    assign(must_rib, mustard)
 
-    # rounded window in the right leg exposing the black grille zone
-    gwin = boxmm("gwin", CORE - 1, OUT + 2, -42.0, -6.0, -38.0, 26.0)
-    bevel(gwin, 5.0, segments=5)
-    boolean(mtop, gwin)
-
-    bevel(mtop, 2.5)
-    assign(mtop, mustard)
-
-    # ---- thin brass thumbwheel, mostly buried in the channel ----
-    kz = (LEG_TOP + LIP_BOT) / 2  # 42
-    wheel = add_cyl("Wheel", 6.0, 24.0, loc=(mm(24), mm(-CORE + 1.0), mm(kz)),
+    # ---- thin brass thumbwheel on the bare top-front strip ----
+    kz = 44.0
+    wheel = add_cyl("Wheel", 5.5, 20.0, loc=(mm(20), mm(-CORE + 1.5), mm(kz)),
                     rot=(0, math.radians(90), 0), verts=48)
-    bevel(wheel, 0.8, segments=3, angle_limit=40)
+    bevel(wheel, 0.7, segments=3, angle_limit=40)
     assign(wheel, brass)
-    for i in range(18):
-        a = i * (2 * math.pi / 18)
-        g = add_cyl("g", 0.5, 30,
-                    loc=(mm(24), mm(-CORE + 1.0) + math.cos(a) * mm(6), mm(kz) + math.sin(a) * mm(6)),
+    for i in range(16):
+        a = i * (2 * math.pi / 16)
+        g = add_cyl("g", 0.45, 26,
+                    loc=(mm(20), mm(-CORE + 1.5) + math.cos(a) * mm(5.5), mm(kz) + math.sin(a) * mm(5.5)),
                     rot=(0, math.radians(90), 0), verts=8)
         boolean(wheel, g)
+    # pocket so the wheel reads seated in the core
+    pocket = boxmm("pocket", 6.0, 34.0, -CORE - 1, -CORE + 4, kz - 7.0, kz + 7.0)
+    boolean(core, pocket)
 
     # ---- studio ----
-    floor_z = -OUT
-    bpy.ops.mesh.primitive_plane_add(size=2.5, location=(0, 0.5, mm(floor_z) - 0.0005))
+    floor_z = -OUTER
+    bpy.ops.mesh.primitive_plane_add(size=3.0, location=(0, 0.6, mm(floor_z) - 0.0005))
     bg = bpy.context.object
     bm = bmesh.new()
     bm.from_mesh(bg.data)
     bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=24, use_grid_fill=True)
     for v2 in bm.verts:
-        if v2.co.y > 0.25:
-            v2.co.z += (v2.co.y - 0.25) ** 2 * 2.2
+        if v2.co.y > 0.3:
+            v2.co.z += (v2.co.y - 0.3) ** 2 * 1.8
     bm.to_mesh(bg.data)
     bg.data.update()
     assign(bg, material("Backdrop", (0.82, 0.79, 0.75), rough=0.9))
 
-    # lower, more eye-level camera than before
-    bpy.ops.object.camera_add(location=(mm(250), mm(-290), mm(120)),
-                              rotation=(math.radians(74), 0, math.radians(40)))
+    bpy.ops.object.camera_add(location=(mm(245), mm(-285), mm(115)),
+                              rotation=(math.radians(75), 0, math.radians(40)))
     cam = bpy.context.object
     cam.data.lens = 60
     bpy.context.scene.camera = cam
