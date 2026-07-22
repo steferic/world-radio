@@ -1,8 +1,9 @@
+
 # Node
-node_modules/
+web-demo/node_modules/
 
 # macOS
-.DS_Store
+web-demo/.DS_Store
 
 # Local editor / tooling config (machine-specific)
-.claude/
+web-demo/.claude/
