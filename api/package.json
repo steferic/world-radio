@@ -1,0 +1,14 @@
+{
+  "name": "world-radio-api",
+  "version": "1.0.0",
+  "description": "Thin proxy & cache in front of radio-browser.info for the World Radio hardware project.",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "dev": "node --watch index.mjs"
+  },
+  "dependencies": {}
+}

@@ -18,10 +18,10 @@
 #define PIN_LCD_RST 9
 #define PIN_LCD_BL 14
 
-// ---- MAX98357A I2S amp ----
-#define PIN_I2S_BCLK 2
-#define PIN_I2S_LRC 15
-#define PIN_I2S_DOUT 4 // wires to the amp's DIN
+// ---- MAX98357A I2S amp pins ----
+#define PIN_I2S_BCLK 36
+#define PIN_I2S_LRC 35
+#define PIN_I2S_DOUT 37
 
 // ---- Rotary encoder (EC11 w/ push) ----
 // (A moved 15 -> 18: GPIO 15 is now the amp's LRC)
