@@ -13,4 +13,7 @@ void playUrl(const char *streamUrl);
 void setVolume(int volume); // 0..21
 bool isRunning();
 
+typedef void (*MetadataCallback)(const char *station, const char *artist, const char *title);
+void onMetadataChanged(MetadataCallback cb);
+
 }

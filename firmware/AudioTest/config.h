@@ -7,18 +7,16 @@
 #pragma once
 
 // ---- WiFi ----
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASS "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID "YOUR WIFI SSID"
+#define WIFI_PASS "YOUR WIFI PASSWORD"
 
-// ---- LCD Pin configuration ----
-#define LCD_PIN_SCLK 12
-#define LCD_PIN_MOSI 11
-#define LCD_PIN_CS   10
-#define LCD_PIN_DC   13
-#define LCD_PIN_RST  14
-
-#define LCD_WIDTH  240
-#define LCD_HEIGHT 320
+// ---- 2.4" ILI9341 SPI LCD (Waveshare 2.4inch LCD Module) ----
+#define PIN_LCD_SCK 12
+#define PIN_LCD_MOSI 11
+#define PIN_LCD_CS 10
+#define PIN_LCD_DC 8
+#define PIN_LCD_RST 9
+#define PIN_LCD_BL 14
 
 // ---- MAX98357A I2S amp pins ----
 #define PIN_I2S_BCLK 36
