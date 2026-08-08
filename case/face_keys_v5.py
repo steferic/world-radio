@@ -39,14 +39,15 @@ CAP_TOP = 20.0      # 1.0mm total taper: sides read vertical
 CAP_H = 4.8
 CAP_R = 2.6         # tighter than v4's 4.0 -> hardware, not app icon
 CAP_TOP_R = 2.8
-RIM = 0.45
+RIM = 0.72
 CAP_SIT = 1.0       # base above the deck surface
 
 # ---- knobs: (grid row from top, base diameter, height, flutes) ----
+# ordered top -> bottom: (name, diameter, height, flutes)
 KNOBS = [
-    ("Volume", 0, 20.4, 11.0, 26),
-    ("Tune",   1, 18.0, 9.6, 22),
-    ("Zoom",   2, 15.8, 9.0, 20),
+    ("Volume", 20.4, 16.5, 26),
+    ("Tune",   18.8, 15.0, 24),
+    ("Zoom",   17.2, 13.6, 22),
 ]
 KNOB_COL = 3        # rightmost column
 FLUTE_DEPTH = 0.38
@@ -172,6 +173,13 @@ def knob(name, cx, cy, z0, dia, height, flutes, dark_mat):
     return ob, ind
 
 
+def tri_prism(name, cx, cy, size, z0, z1):
+    """Equilateral-ish play triangle, pointing +x, as a shallow cutter."""
+    h = size * 0.5
+    pts = [(-h * 0.62, -h), (-h * 0.62, h), (h * 0.86, 0.0)]
+    return loft(name, pts, pts, z0, z1, cx, cy)
+
+
 def matte(name, color, rough=0.44, coat=0.0):
     m = bpy.data.materials.new(name)
     m.use_nodes = True
@@ -205,6 +213,7 @@ def build():
     knob_mat = matte("Knob", (0.930, 0.914, 0.872), rough=0.29, coat=0.16)
     ink_mat = matte("Inlay", (0.013, 0.014, 0.016), rough=0.42, coat=0.06)
     dark_mat = matte("Marker", (0.02, 0.02, 0.023), rough=0.5)
+    accent_mat = matte("Accent", (0.545, 0.108, 0.070), rough=0.34, coat=0.12)
 
     # ---- deck, pocketed flush for the plate ----
     deck = prism("Deck", 0, 0, PLATE, PLATE, DECK_R, 0, PT)
@@ -223,19 +232,34 @@ def build():
     smooth(ink)
     assign(ink, ink_mat)
 
-    # ---- grid ----
-    knob_rows = {r: (nm, d, h, f) for (nm, r, d, h, f) in KNOBS}
+    # ---- keys ----
     for row in range(N):
         for col in range(N):
+            if col == KNOB_COL and row < len(KNOBS):
+                continue                            # knob cells handled below
             cx = (col - (N - 1) / 2) * PITCH
-            cy = ((N - 1) / 2 - row) * PITCH      # row 0 = top
-            if col == KNOB_COL and row in knob_rows:
-                nm, dia, h, fl = knob_rows[row]
-                kb, ind = knob(nm, cx, cy, PT + 0.6, dia, h, fl, dark_mat)
-                assign(kb, knob_mat)
+            cy = ((N - 1) / 2 - row) * PITCH        # row 0 = top
+            cap = keycap(f"Key{row}{col}", cx, cy, PT + CAP_SIT)
+            if col == KNOB_COL and row == N - 1:
+                # the 16th cell: accent play/stop key with a debossed glyph
+                assign(cap, accent_mat)
+                boolean(cap, tri_prism("glyph", cx, cy, 8.2,
+                                       PT + CAP_SIT + CAP_H - 0.45,
+                                       PT + CAP_SIT + CAP_H + 1))
             else:
-                cap = keycap(f"Key{row}{col}", cx, cy, PT + CAP_SIT)
                 assign(cap, cap_mat)
+
+    # ---- knobs: centres nudged off-grid so the EDGE gaps are equal ----
+    kx = (KNOB_COL - (N - 1) / 2) * PITCH
+    y_top = ((N - 1) / 2 - 0) * PITCH
+    y_bot = ((N - 1) / 2 - (len(KNOBS) - 1)) * PITCH
+    r_top, r_bot = KNOBS[0][1] / 2, KNOBS[-1][1] / 2
+    # equal-gap solution for the middle knob (see notes): y2 = (y1+y3+r3-r1)/2
+    y_mid = (y_top + y_bot + r_bot - r_top) / 2
+    ys = [y_top, y_mid, y_bot]
+    for (nm, dia, h, fl), cy in zip(KNOBS, ys):
+        kb, ind = knob(nm, kx, cy, PT + 0.6, dia, h, fl, dark_mat)
+        assign(kb, knob_mat)
 
     # ---- studio ----
     bpy.ops.mesh.primitive_plane_add(size=3.4, location=(0, 0.55, -0.0004))
