@@ -11,10 +11,47 @@ const RADIO_BROWSER_HOSTS = [
   'nl1.api.radio-browser.info',
 ];
 
+// limit is intentionally high (1500) because we filter aggressively below --
+// after dropping HLS mounts, playlist URLs, and non-MP3/AAC codecs we still
+// need to end up with ~MAX_STATIONS entries.
 const SEARCH_PATH =
-  '/json/stations/search?has_geo_info=true&hidebroken=true&order=clickcount&reverse=true&limit=500';
+  '/json/stations/search?has_geo_info=true&hidebroken=true&order=clickcount&reverse=true&limit=1500';
 
-const USER_AGENT = 'WorldRadioAPI/1.0 (+https://github.com/BKell-Dog/world-radio)';
+// The ESP32 firmware ships MP3 and AAC decoders only. Anything else (OGG,
+// FLAC, Opus, etc.) is dropped at ingest so /random can't hand the device a
+// stream it physically can't play. Values here are compared case-insensitively
+// against radio-browser's `codec` field, which uses a small controlled set.
+const MP3_CODECS = new Set(['MP3', 'MPEG']);
+const AAC_CODECS = new Set(['AAC', 'AAC+', 'AACP', 'HE-AAC', 'HE-AACV2']);
+
+// Playlist / manifest file extensions. If the resolved URL points to one of
+// these, the "stream" is actually a text file the MCU would have to parse to
+// find the real audio -- reject it. Checked against the URL's pathname (query
+// string stripped) so `.../stream.mp3?token=...` still passes.
+const PLAYLIST_EXTS = new Set([
+  '.m3u', '.m3u8', '.pls', '.asx', '.xspf', '.ram', '.rm', '.wpl',
+]);
+
+function classifyCodec(codec) {
+  const c = (codec || '').trim().toUpperCase();
+  if (MP3_CODECS.has(c)) return 'mp3';
+  if (AAC_CODECS.has(c)) return 'aac';
+  return null;
+}
+
+function isPlaylistUrl(url) {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.toLowerCase();
+    const dot = path.lastIndexOf('.');
+    if (dot < 0) return false;
+    return PLAYLIST_EXTS.has(path.slice(dot));
+  } catch {
+    return true; // unparseable URL -- reject to be safe
+  }
+}
+
+const USER_AGENT = 'WorldRadioAPI/1.0 (+https://github.com/bkelldog/world-radio)';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const UPSTREAM_TIMEOUT_MS = 8000;
@@ -37,6 +74,16 @@ function normalize(raw) {
   const stream_url = raw.url_resolved || raw.url;
   if (!stream_url) return null;
 
+  // MCU can't parse HLS manifests -- radio-browser flags these with hls=1.
+  if (raw.hls === 1 || raw.hls === '1' || raw.hls === true) return null;
+
+  // Even without the hls flag, a URL that ends in .m3u8/.pls/etc. serves a
+  // playlist file rather than raw audio bytes. Reject those too.
+  if (isPlaylistUrl(stream_url)) return null;
+
+  const format = classifyCodec(raw.codec);
+  if (!format) return null;
+
   const region = (raw.state || '').trim();
   const country = raw.countrycode || '';
   const location = [region, country].filter(Boolean).join(', ');
@@ -51,6 +98,7 @@ function normalize(raw) {
     lat,
     genre: (raw.tags || '').split(',')[0].trim(),
     codec: raw.codec || '',
+    format, // 'mp3' or 'aac' -- lets the MCU pick a decoder without string parsing
     bitrate: raw.bitrate || 0,
     stream_url,
     homepage: raw.homepage || '',
@@ -146,6 +194,7 @@ function slim(s) {
     lat: s.lat,
     genre: s.genre,
     codec: s.codec,
+    format: s.format,
     bitrate: s.bitrate,
   };
 }
