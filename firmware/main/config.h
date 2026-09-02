@@ -3,8 +3,8 @@
 // ---------------------------------------------------------------------------
 // Wi-Fi
 // ---------------------------------------------------------------------------
-#define WIFI_SSID               "YOUR_SSID"
-#define WIFI_PASS               "YOUR_PASS"
+#define WIFI_SSID               "SM-G970U72a"
+#define WIFI_PASS               "0000005958"
 #define WIFI_CONNECT_MAX_RETRY  10
 
 // ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@
 // Size of the byte ring buffer sitting between the HTTP fetch task and the
 // MP3 decode/I2S task. Bigger = more resilience to network jitter/stalls,
 // at the cost of RAM and added latency.
-#define AUDIO_RINGBUF_BYTES     (128 * 1024)
+#define AUDIO_RINGBUF_BYTES     (512 * 1024)
 
 // ---------------------------------------------------------------------------
 // GPIO —> MAX98357A I2S DAC/amp wiring
@@ -43,14 +43,10 @@
 // ---------------------------------------------------------------------------
 // Rotary encoder (station select) (not yet implemented)
 // ---------------------------------------------------------------------------
-// EDIT to match your wiring. Avoid the strapping pins and octal-PSRAM range
-// noted above -- GPIO15/16 are safe generic picks on most ESP32-S3 boards.
 #define ROTARY_ENCODER_GPIO_A     GPIO_NUM_15
 #define ROTARY_ENCODER_GPIO_B     GPIO_NUM_16
 
-// Same idea as VOLUME_POT_INVERT: flip this if turning the knob the
-// direction you'd expect to go "forward" through stations goes backward
-// instead. Purely a software fix, no rewiring needed.
+// Invert the direction the R.E. turns, in case the hardware wiring in inverted.
 #define ROTARY_ENCODER_INVERT     0
 
 #define ROTARY_ENCODER_POLL_INTERVAL_MS 30

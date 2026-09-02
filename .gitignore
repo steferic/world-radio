@@ -8,6 +8,4 @@ web-demo/.DS_Store
 # Local editor / tooling config (machine-specific)
 web-demo/.claude/
 
-firmware/C/MVP/build
-
 .claude/

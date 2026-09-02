@@ -27,6 +27,7 @@ static int s_current_rate = 0;
 static esp_err_t i2s_setup(void)
 {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    chan_cfg.auto_clear_after_cb = true;
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &s_tx_handle, NULL));
 
     i2s_std_config_t std_cfg = {

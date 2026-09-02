@@ -3,6 +3,7 @@
 #include <string.h>
 #include "freertos/ringbuf.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "audio_pipe";
 static RingbufHandle_t s_ringbuf = NULL;
@@ -15,11 +16,14 @@ atomic_uint_fast32_t g_audio_pipe_rate_changes = 0;
 
 esp_err_t audio_pipe_init(size_t capacity_bytes)
 {
-    s_ringbuf = xRingbufferCreate(capacity_bytes, RINGBUF_TYPE_BYTEBUF);
+    // xRingBufferCreateWithCaps, as opposed to xRingBufferCreate, puts the audio buffer in
+    // the external PSRAM memory that is included alongside regular internal SRAM.
+    s_ringbuf = xRingbufferCreateWithCaps(capacity_bytes, RINGBUF_TYPE_BYTEBUF, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (s_ringbuf == NULL) {
         ESP_LOGE(TAG, "failed to allocate %u byte ring buffer", (unsigned)capacity_bytes);
         return ESP_ERR_NO_MEM;
     }
+    ESP_LOGI(TAG, "ring buffer at %p (PSRAM if 0x3C..., internal if 0x3FC...)", (void *)s_ringbuf);
     s_capacity_bytes = capacity_bytes;
     return ESP_OK;
 }

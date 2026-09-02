@@ -13,7 +13,7 @@
 
 static const char *TAG = "http_stream";
 
-#define READ_CHUNK_SIZE 1024
+#define READ_CHUNK_SIZE 4096
 #define BACKOFF_MIN_MS  1000
 #define BACKOFF_MAX_MS  10000
 

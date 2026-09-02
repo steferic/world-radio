@@ -13,6 +13,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "network/mem_probe.h"
+
 static const char *TAG = "main";
 
 // Logs ring buffer fill level and per-second rates of each failure mode
@@ -57,6 +59,9 @@ static void monitor_task(void *pvParameters)
 
 void app_main(void)
 {
+    //ESP_ERROR_CHECK(mem_probe_init());
+    //mem_probe_snapshot("boot");
+    
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
