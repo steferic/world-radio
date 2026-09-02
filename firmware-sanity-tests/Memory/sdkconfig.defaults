@@ -1,0 +1,30 @@
+# Memory sanity test defaults for ESP32-S3 N8R2 (8 MB flash, 2 MB quad PSRAM).
+
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_IDF_TARGET_ESP32S3=y
+
+# Flash: 8 MB. Wrong values here silently clamp the usable flash.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
+# Give the app room even without OTA/data partitions.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
+
+# PSRAM: N8R2 is QUAD SPI PSRAM. R8 variants are OCTAL -- swap MODE_QUAD for
+# MODE_OCT if you flash this on an N16R8 or similar. IGNORE_NOTFOUND lets the
+# firmware still boot on a board with no PSRAM (useful for the diagnostic).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_MEMTEST=y
+
+# Run at full speed so cache-miss latency to PSRAM feels realistic.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# Enough stack for the report task; report is single-threaded and printf-heavy.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

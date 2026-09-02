@@ -1,0 +1,22 @@
+# Minimal defaults for an ESP32-S3 HTTPS sanity test.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# Certificate bundle is required for any TLS verification against public CAs.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# Enough stack for app_main to bring up Wi-Fi and issue one HTTPS request.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Enable PSRAM opportunistically -- won't fault if the board lacks it, but
+# frees DRAM for mbedTLS on boards that have it. Adjust mode per board:
+# N16R8 needs OCT; N8R2 needs QUAD (change CONFIG_SPIRAM_MODE_OCT below).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+
+# Verbose stack overflow reports
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
