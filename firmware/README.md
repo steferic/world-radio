@@ -1,58 +1,84 @@
-# World Radio firmware (Arduino IDE)
+# world-radio-mp3
 
-The ESP32-S3 firmware as an Arduino sketch: open `WorldRadio/WorldRadio.ino` in the
-Arduino IDE and it compiles + flashes the board for you.
+ESP32-S3 + ESP-IDF 5.5: fetches an MP3 stream over HTTP, decodes it with
+[minimp3](https://github.com/lieff/minimp3), and plays it out over I2S to a
+MAX98357A amp.
 
-It's the C++ port of the browser prototype's projection core — a color globe on the
-2.4" LCD, rotary-encoder tuning with ease-to-station animation, push-to-play internet
-radio out the I2S amp. Station + coastline data are baked in (`coastline.h`,
-`stations.h`, generated from the repo's data).
+## Layout
 
-## Hardware
+```
+CMakeLists.txt
+sdkconfig.defaults
+main/
+  config.h          <-- edit this: Wi-Fi, stream URL, GPIO pins
+  main.c            app_main: bring-up + wires the two tasks together
+  wifi_connect.c/h   station-mode Wi-Fi with auto-reconnect
+  audio_pipe.c/h     byte ring buffer between the two tasks below
+  http_stream.c/h    task: HTTP GET the stream, push bytes into audio_pipe
+  mp3_player.c/h     task: pull bytes, decode with minimp3, write I2S
+components/minimp3/
+  include/minimp3.h  vendored verbatim from lieff/minimp3 (CC0 / public domain)
+  minimp3_impl.c      the one TU that instantiates the header's implementation
+```
 
-| Part | Notes |
-|---|---|
-| ESP32-S3-DevKitC-1 **N16R8** | 16 MB flash / 8 MB octal PSRAM |
-| Waveshare 2.4" LCD (ILI9341, SPI) | pins in `config.h` |
-| MAX98357A I2S amp + 4 Ω speaker | pins in `config.h` |
-| EC11 rotary encoder w/ push | rotate = tune · push = play/stop |
+## Before building
 
-Full wiring rationale: `../firmware-notes/ESP32-PORTING.md`.
+Edit `main/config.h`:
 
-## Arduino IDE setup (once)
-
-1. **Install the IDE:** [arduino.cc/en/software](https://www.arduino.cc/en/software) (IDE 2.x).
-2. **ESP32 board support:** *Boards Manager* → search **esp32** → install
-   **"esp32 by Espressif Systems"** (3.x).
-3. **Libraries:**
-   - *Library Manager* → install **LovyanGFX** (by lovyan03).
-   - **ESP32-audioI2S** is not in the Library Manager — download the ZIP from
-     [github.com/schreibfaul1/ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S)
-     (*Code → Download ZIP*, or a release ZIP), then *Sketch → Include Library →
-     Add .ZIP Library…*
-     - If you hit a compile error mentioning `dsps_biquad…`, your esp32 core and the
-       library version disagree — try the latest **release** ZIP instead of master
-       (or update the esp32 core to the newest 3.x). The library tracks recent cores.
+- `WIFI_SSID` / `WIFI_PASS`
+- `STREAM_URL` — a direct MP3 stream URL (see note below on ICY metadata)
+- `I2S_BCLK_GPIO`, `I2S_WS_GPIO`, `I2S_DOUT_GPIO` — wire these to the
+  MAX98357A's BCLK, LRC, and DIN pins respectively
+- `I2S_SD_GPIO` — optional, drives the amp's SD (shutdown) pin so it starts
+  muted and gets enabled by firmware. Set to `-1` if you've tied SD directly
+  to a rail on your board instead.
 
 ## Build & flash
 
-1. Open `WorldRadio/WorldRadio.ino`.
-2. Edit **`config.h`**: your WiFi SSID/password (and the pin map if you wired differently).
-3. *Tools* menu:
-   - **Board:** ESP32S3 Dev Module
-   - **PSRAM:** OPI PSRAM  ← important (N16R8 is octal PSRAM)
-   - **Flash Size:** 16MB
-   - **Partition Scheme:** 16M Flash (3MB APP/9.9MB FATFS)  ← important — the
-     firmware is ~2 MB, bigger than the default 1.25 MB app partition
-   - **USB CDC On Boot:** Enabled (so `Serial` prints over the USB port)
-   - **Port:** the board's USB port
-4. **Upload** (→ arrow). The IDE compiles the binary and flashes it.
-5. *Tools → Serial Monitor* (115200) for logs.
+```
+. $IDF_PATH/export.sh
+idf.py set-target esp32s3
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
+```
 
-## What you should see
+## How it's wired together
 
-Boot → globe renders (wireframe coastlines + graticule + station markers) → "wifi ok"
-in the status line → rotate the knob to swing the globe between stations → press the
-knob to play the selected station through the speaker. Stations without a stream URL
-show "no stream for this pin" (5 of the 30 curated pins are playable; the live-station
-fetch is a later milestone).
+Two FreeRTOS tasks, pinned to separate cores, talk through a byte ring
+buffer (`audio_pipe`):
+
+- **Core 0**: `http_stream_task` opens the HTTP connection and reads raw MP3
+  bytes as fast as the server sends them, pushing each chunk into the ring
+  buffer. It reconnects with exponential backoff (1s → 10s) on any drop.
+- **Core 1**: `mp3_player`'s decode task pulls bytes out, hands them to
+  `mp3dec_decode_frame()`, and writes the resulting PCM to I2S. The
+  `i2s_channel_write()` call blocks until the DMA has room, which is what
+  paces the whole pipeline to real-time playback speed — the decode loop
+  naturally only pulls as much audio as is being played.
+
+The I2S clock is reconfigured on the fly (`i2s_channel_reconfig_std_clock`)
+if the stream's actual sample rate differs from the 44.1 kHz default, so it
+adapts to whatever the source encodes at. Mono streams get duplicated into
+both channels before writing, since the I2S side is always configured for
+stereo slots.
+
+## Things worth knowing about
+
+- **ICY metadata**: Icecast/Shoutcast servers only interleave `StreamTitle=`
+  metadata blocks into the byte stream if the client sends
+  `Icy-MetaData: 1`. This code doesn't send that header on purpose, so a
+  normal Icecast mountpoint should hand back clean, uninterrupted MP3 bytes.
+  If your specific stream still injects metadata, `http_stream.c` would need
+  a stage that parses and strips the `StreamTitle` blocks before they hit
+  the ring buffer.
+- **Ring buffer size**: `AUDIO_RINGBUF_BYTES` (default 64 KB) is your jitter
+  budget — roughly a few seconds of audio at typical internet-radio
+  bitrates. Bump it if you're on a flaky link (cellular, etc.) and can
+  spare the RAM.
+- **Resync on garbage**: if the decoder can't find a valid frame header
+  after filling its whole staging buffer, it drops half of it and tries
+  again rather than stalling — handles the occasional corrupt/non-MP3 byte
+  run without wedging the pipeline.
+- **minimp3 license**: CC0 (public domain), vendored verbatim in
+  `components/minimp3/include/minimp3.h` — no attribution required, but the
+  original LICENSE file is included alongside it anyway.

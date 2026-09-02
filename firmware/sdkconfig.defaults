@@ -1,0 +1,9 @@
+# Give app_main a bit more room; it just brings up Wi-Fi/tasks and returns.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# Needed if you ever point STREAM_URL at an https:// source.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# LWIP TCP receive window a bit larger helps smooth out jittery HTTP audio.
+CONFIG_LWIP_TCP_WND_DEFAULT=5744
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12

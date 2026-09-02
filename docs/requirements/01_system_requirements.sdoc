@@ -1,0 +1,47 @@
+[DOCUMENT]
+TITLE: System Requirements
+PREFIX: SYS-
+OPTIONS:
+  ENABLE_MID: True
+
+[REQUIREMENT]
+UID: SYS-1
+TITLE: Map-based station browsing
+STATEMENT: >>>
+The device shall display an interactive world map that the user can pan and zoom to browse by location.
+<<<
+
+[REQUIREMENT]
+UID: SYS-2
+TITLE: Location-based streaming
+STATEMENT: >>>
+The device shall let the user select a location on the map and begin streaming a live internet radio station associated with that location.
+<<<
+
+[REQUIREMENT]
+UID: SYS-3
+TITLE: Self-contained audio output
+STATEMENT: >>>
+The device shall play audio through built-in stereo speakers, without requiring an external speaker or a paired device.
+<<<
+
+[REQUIREMENT]
+UID: SYS-4
+TITLE: Standalone operation
+STATEMENT: >>>
+The device shall function as a standalone appliance, with no companion app or outside service required for basic listening.
+<<<
+
+[REQUIREMENT]
+UID: SYS-5
+TITLE: Wireless Connectivity
+STATEMENT: >>>
+The device shall connect to the internet over Wifi to stream audio. The user shall be able to input Wifi credentials.
+<<<
+
+[REQUIREMENT]
+UID: SYS-6
+TITLE: Power
+STATEMENT: >>>
+The device shall plug into mains power and perform all necessary power conversions internally.
+<<<

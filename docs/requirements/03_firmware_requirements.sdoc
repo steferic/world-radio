@@ -1,0 +1,61 @@
+[DOCUMENT]
+TITLE: Firmware Requirements
+PREFIX: FW-
+OPTIONS:
+  ENABLE_MID: True
+
+[REQUIREMENT]
+UID: FW-1
+TITLE: Map rendering
+STATEMENT: >>>
+Firmware shall render a pannable, zoomable map UI to the display over the SPI interface defined in I-1.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-1
+- TYPE: Parent
+  VALUE: HW-2
+
+[REQUIREMENT]
+UID: FW-2
+TITLE: Location-to-stream resolution
+STATEMENT: >>>
+Firmware shall maintain a mapping between map coordinates or regions and available internet radio stream URLs.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-2
+
+[REQUIREMENT]
+UID: FW-3
+TITLE: Streaming and playback
+STATEMENT: >>>
+Firmware shall connect to Wi-Fi, resolve the stream for a selected location, decode it, and output audio via the interface defined in I-2.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-2
+- TYPE: Parent
+  VALUE: HW-3
+- TYPE: Parent
+  VALUE: FW-5
+
+[REQUIREMENT]
+UID: FW-4
+TITLE: Input handling
+STATEMENT: >>>
+Firmware shall translate signals from the input mechanism defined in HW-4 into map pan/zoom gestures.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: HW-4
+
+[REQUIREMENT]
+UID:FW-5
+TITLE: Wifi Connectivity
+STATEMENT: >>>
+Firmware shall connect to Wifi using stored credentials and shall use this interface to stream audio.
+<<<
+REALTIONS:
+- TYPE: Parent
+  VALUE: SYS-5

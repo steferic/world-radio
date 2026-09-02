@@ -1,0 +1,74 @@
+[DOCUMENT]
+TITLE: Hardware Requirements
+PREFIX: HW-
+OPTIONS:
+  ENABLE_MID: True
+
+[GRAMMAR]
+ELEMENTS:
+- TAG: REQUIREMENT
+  FIELDS:
+  - TITLE: UID
+    TYPE: String
+    REQUIRED: False
+  - TITLE: TITLE
+    TYPE: String
+    REQUIRED: False
+  - TITLE: STATEMENT
+    TYPE: String
+    REQUIRED: False
+  - TITLE: COMPLETION_CRITERIA
+    TYPE: String
+    REQUIRED: False
+  RELATIONS:
+  - TYPE: Parent
+
+[REQUIREMENT]
+UID: HW-1
+TITLE: Core compute module
+STATEMENT: >>>
+The board shall be built around a compute module powerful enough to render graphics, stream audio over Wifi, accept inputs, and manage peripherals simultaneously.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-1
+
+[REQUIREMENT]
+UID: HW-2
+TITLE: Display
+STATEMENT: >>>
+The board shall include a display connector routed for a TFT panel capable of rendering a smooth, detailed map view, driven over the SPI interface defined in I-1.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-1
+
+[REQUIREMENT]
+UID: HW-3
+TITLE: Audio output path
+STATEMENT: >>>
+The board shall include an audio output path (DAC or I2S) feeding a stereo amplifier and the built-in speakers, per the interface defined in I-2.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-3
+
+[REQUIREMENT]
+UID: HW-4
+TITLE: Map input mechanism
+STATEMENT: >>>
+The board shall provide an input mechanism suitable for pan/zoom map interaction. Input method (touch overlay, rotary encoder, physical buttons) is TBD -- see open questions.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-1
+
+[REQUIREMENT]
+UID: HW-5
+TITLE: Enclosure
+STATEMENT: >>>
+The enclosure shall house the display, speakers, and input hardware in a single self-contained form factor.
+<<<
+RELATIONS:
+- TYPE: Parent
+  VALUE: SYS-4

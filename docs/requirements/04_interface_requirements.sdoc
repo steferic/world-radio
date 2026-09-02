@@ -1,0 +1,26 @@
+[DOCUMENT]
+TITLE: Interface Requirements (ICD)
+PREFIX: I-
+OPTIONS:
+  ENABLE_MID: True
+
+[REQUIREMENT]
+UID: I-1
+TITLE: Display SPI interface
+STATEMENT: >>>
+Display shall be driven over SPI. Bus, clock rate, and pin mapping (MOSI/SCLK/CS/DC/RST) to be finalized once the display component is selected.
+<<<
+
+[REQUIREMENT]
+UID: I-2
+TITLE: Audio output interface
+STATEMENT: >>>
+Audio shall be delivered from the ESP32-S3 to the amplifier via I2S.
+<<<
+
+[REQUIREMENT]
+UID: I-3
+TITLE: Input interface
+STATEMENT: >>>
+Input mechanism signal (touch, encoder, or button matrix) to firmware: pin mapping and protocol to be defined once HW-4 is resolved.
+<<<

@@ -1,0 +1,23 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "network/wifi_connect.c"
+        "audio/audio_pipe.c"
+        "audio/http_stream.c"
+        "audio/mp3_player.c"
+        "input/volume_control.c"
+        "display/lcd_driver.c"
+        "display/font5x7.c"
+        "display/display_ui.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        driver
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_client
+        mbedtls
+        nvs_flash
+        minimp3
+        esp_adc
+)
