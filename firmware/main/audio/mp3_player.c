@@ -24,6 +24,85 @@ static const char *TAG = "mp3_player";
 static i2s_chan_handle_t s_tx_handle;
 static int s_current_rate = 0;
 
+static const size_t NOISE_FADE_START_BYTES = 32768;  // start fading in ~1.3s from empty
+static const size_t NOISE_FADE_END_BYTES   = 0;      // full noise at empty
+static const float  NOISE_MAX_AMPLITUDE    = 0.20f;  // -14 dBFS at peak
+static const float  NOISE_FADE_ALPHA       = 0.0008f;// ~250 ms glide at 48 kHz
+
+// PRNG + LPF + gain smoother state.
+static uint32_t s_rng_state = 0xACE1u;
+static int32_t  s_noise_lp = 0;
+static float    s_noise_gain_smoothed = 0.0f;
+
+// A single MP3 frame's worth of interleaved stereo samples, reused whenever
+// the decoder is starved and we need to feed I2S a synthetic block instead.
+#define NOISE_FALLBACK_SAMPLES (1152 * 2)
+static int16_t s_noise_block[NOISE_FALLBACK_SAMPLES];
+
+static inline int16_t noise_sample_s16(void)
+{
+    uint32_t x = s_rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    s_rng_state = x;
+    return (int16_t)(x & 0xFFFF);
+}
+
+static inline int16_t noise_colored_s16(void)
+{
+    int32_t white = (int32_t)noise_sample_s16();
+    // Warm hiss instead of harsh white — try shifting by 2 for brighter or
+    // 5 for darker/browner if this default isn't to your taste.
+    s_noise_lp += (white - s_noise_lp) >> 3;
+    return (int16_t)s_noise_lp;
+}
+
+static float compute_target_gain(size_t fill_bytes)
+{
+    if (fill_bytes >= NOISE_FADE_START_BYTES) return 0.0f;
+    if (fill_bytes <= NOISE_FADE_END_BYTES)   return 1.0f;
+    return 1.0f - (float)(fill_bytes - NOISE_FADE_END_BYTES) /
+                  (float)(NOISE_FADE_START_BYTES - NOISE_FADE_END_BYTES);
+}
+
+// Mix noise into pcm[] in place, then write the result to I2S. Volume is
+// applied to noise too so turning the knob down also quiets the static.
+static void mix_and_write(int16_t *pcm, size_t num_samples)
+{
+    size_t fill_bytes = audio_pipe_get_fill_bytes();
+    float target = compute_target_gain(fill_bytes);
+    float vol = volume_control_get_gain();
+
+    for (size_t i = 0; i < num_samples; i++) {
+        s_noise_gain_smoothed += NOISE_FADE_ALPHA * (target - s_noise_gain_smoothed);
+        float g = s_noise_gain_smoothed;
+
+        float signal = (float)pcm[i];
+        float noise  = (float)noise_colored_s16() * NOISE_MAX_AMPLITUDE;
+
+        // Crossfade signal <-> noise first, THEN apply the master volume.
+        // Doing it in this order guarantees the knob controls the entire
+        // output uniformly -- music, static, and everything in between.
+        // float mixed = (signal * (1.0f - g) + noise * g) * vol;
+        // float mixed = (signal + noise) * 0.5f * vol;
+        float mixed = noise * vol; // All noise, no music.
+
+        int32_t out_i = (int32_t)mixed;
+        if (out_i >  32767) out_i =  32767;
+        if (out_i < -32768) out_i = -32768;
+        pcm[i] = (int16_t)out_i;
+    }
+
+    size_t written = 0;
+    esp_err_t err = i2s_channel_write(s_tx_handle, pcm,
+                                      num_samples * sizeof(int16_t),
+                                      &written, portMAX_DELAY);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "i2s_channel_write: %s", esp_err_to_name(err));
+    }
+}
+
 static esp_err_t i2s_setup(void)
 {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
@@ -91,7 +170,10 @@ static void decode_task(void *pvParameters)
             stage_len += n;
         }
         if (stage_len == 0) {
-            continue; // nothing buffered yet
+            // Add in white noise if no data is buffered in this interval.
+            memset(s_noise_block, 0, sizeof(s_noise_block));
+            mix_and_write(s_noise_block, NOISE_FALLBACK_SAMPLES);
+            continue;
         }
 
         mp3dec_frame_info_t info;
@@ -126,26 +208,7 @@ static void decode_task(void *pvParameters)
             out = pcm_stereo;
         }
 
-        // Apply the potentiometer's gain in place. Skip the multiply
-        // entirely at full volume (the common case if the knob is maxed)
-        // to avoid burning cycles on every single sample for nothing.
-        float gain = volume_control_get_gain();
-        if (gain < 0.999f) {
-            int16_t *mutable_out = (int16_t *)out;
-            size_t total_samples = (size_t)samples * 2; // stereo out
-            for (size_t i = 0; i < total_samples; i++) {
-                mutable_out[i] = (int16_t)((float)mutable_out[i] * gain);
-            }
-        }
-
-        size_t bytes_to_write = (size_t)samples * 2 /* channels out */ * sizeof(int16_t);
-        size_t bytes_written = 0;
-        // Blocking write: this is what paces the whole pipeline to real time
-        // -- the decode loop only pulls new bytes as fast as I2S drains them.
-        esp_err_t err = i2s_channel_write(s_tx_handle, out, bytes_to_write, &bytes_written, portMAX_DELAY);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "i2s_channel_write: %s", esp_err_to_name(err));
-        }
+        mix_and_write((int16_t *)out, (size_t)samples * 2);
     }
 }
 
