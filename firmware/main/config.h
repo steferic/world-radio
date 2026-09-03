@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sdkconfig.h"
+
 // ---------------------------------------------------------------------------
 // Wi-Fi
 // ---------------------------------------------------------------------------
@@ -20,9 +22,13 @@
 // ---------------------------------------------------------------------------
 // GPIO —> MAX98357A I2S DAC/amp wiring
 // ---------------------------------------------------------------------------
-#define I2S_BCLK_GPIO           GPIO_NUM_36
-#define I2S_WS_GPIO             GPIO_NUM_37
-#define I2S_DOUT_GPIO           GPIO_NUM_35
+#if CONFIG_SPIRAM_MODE_OCT
+    #include "boards/n16r8.h"
+#elif CONFIG_SPIRAM_MODE_QUAD
+    #include "boards/n8r2.h"
+#else
+    #error "No board detected: set CONFIG_SPIRAM_MODE_QUAD or _OCT in the sdkconfig fragment for the target board."
+#endif
 
 // ---------------------------------------------------------------------------
 // Volume potentiometer

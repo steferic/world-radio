@@ -25,6 +25,7 @@ static void monitor_task(void *pvParameters)
 {
     (void)pvParameters;
     uint32_t last_drops = 0, last_underruns = 0, last_resyncs = 0, last_rate_changes = 0;
+    uint32_t last_bytes = atomic_load(&g_http_bytes_read_total);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -35,9 +36,13 @@ static void monitor_task(void *pvParameters)
         uint32_t underruns = atomic_load(&g_audio_pipe_read_underruns);
         uint32_t resyncs = atomic_load(&g_audio_pipe_resyncs);
         uint32_t rate_changes = atomic_load(&g_audio_pipe_rate_changes);
+        uint32_t bytes = atomic_load(&g_http_bytes_read_total);
+        uint32_t bytes_per_sec = bytes - last_bytes;
 
-        ESP_LOGI(TAG, "ringbuf %u%% (%u/%u B) | drops +%lu | underruns +%lu | resyncs +%lu | rate changes +%lu",
+        ESP_LOGI(TAG,
+                 "ringbuf %u%% (%u/%u B) | net %u B/s | drops +%lu | underruns +%lu | resyncs +%lu | rate changes +%lu",
                  cap ? (unsigned)(100 * fill / cap) : 0, (unsigned)fill, (unsigned)cap,
+                 (unsigned)bytes_per_sec,
                  (unsigned long)(drops - last_drops),
                  (unsigned long)(underruns - last_underruns),
                  (unsigned long)(resyncs - last_resyncs),
@@ -47,6 +52,7 @@ static void monitor_task(void *pvParameters)
         last_underruns = underruns;
         last_resyncs = resyncs;
         last_rate_changes = rate_changes;
+        last_bytes = bytes;
 
         static size_t s_monitor_min_watermark = SIZE_MAX;
         size_t watermark = uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t);

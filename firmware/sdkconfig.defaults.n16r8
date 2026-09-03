@@ -1,0 +1,9 @@
+# Board-specific overrides for ESP32-S3 N16R8 (16 MB flash, 8 MB octal-SPI PSRAM).
+
+# PSRAM chip is an octal-SPI part on this module. See sdkconfig.defaults.n8r2
+# for the quad alternative.
+CONFIG_SPIRAM_MODE_OCT=y
+
+# Flash size on this module is 16 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"

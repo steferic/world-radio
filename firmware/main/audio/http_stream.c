@@ -13,6 +13,8 @@
 
 static const char *TAG = "http_stream";
 
+atomic_uint_fast32_t g_http_bytes_read_total = 0;
+
 #define READ_CHUNK_SIZE 4096
 #define BACKOFF_MIN_MS  1000
 #define BACKOFF_MAX_MS  10000
@@ -92,6 +94,8 @@ static bool stream_once(void)
             atomic_fetch_add(&g_audio_pipe_write_drops, 1);
             ESP_LOGW(TAG, "ring buffer full, dropping %d bytes", n);
         }
+
+        atomic_fetch_add(&g_http_bytes_read_total, (uint32_t)n);
     }
 
     free(buf);
