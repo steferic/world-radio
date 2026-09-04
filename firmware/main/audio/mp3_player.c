@@ -24,9 +24,9 @@ static const char *TAG = "mp3_player";
 static i2s_chan_handle_t s_tx_handle;
 static int s_current_rate = 0;
 
-static const size_t NOISE_FADE_START_BYTES = 32768;  // start fading in ~1.3s from empty
+static const size_t NOISE_FADE_START_BYTES = 16384;  // 16 kB, starts fading in ~1.3s from empty
 static const size_t NOISE_FADE_END_BYTES   = 0;      // full noise at empty
-static const float  NOISE_MAX_AMPLITUDE    = 0.20f;  // -14 dBFS at peak
+static const float  NOISE_MAX_AMPLITUDE    = 1.0f;  // -14 dBFS at peak
 static const float  NOISE_FADE_ALPHA       = 0.0008f;// ~250 ms glide at 48 kHz
 
 // PRNG + LPF + gain smoother state.
@@ -66,8 +66,7 @@ static float compute_target_gain(size_t fill_bytes)
                   (float)(NOISE_FADE_START_BYTES - NOISE_FADE_END_BYTES);
 }
 
-// Mix noise into pcm[] in place, then write the result to I2S. Volume is
-// applied to noise too so turning the knob down also quiets the static.
+// Mix noise into pcm[] in place, then write the result to I2S
 static void mix_and_write(int16_t *pcm, size_t num_samples)
 {
     size_t fill_bytes = audio_pipe_get_fill_bytes();
@@ -81,12 +80,9 @@ static void mix_and_write(int16_t *pcm, size_t num_samples)
         float signal = (float)pcm[i];
         float noise  = (float)noise_colored_s16() * NOISE_MAX_AMPLITUDE;
 
-        // Crossfade signal <-> noise first, THEN apply the master volume.
-        // Doing it in this order guarantees the knob controls the entire
-        // output uniformly -- music, static, and everything in between.
-        // float mixed = (signal * (1.0f - g) + noise * g) * vol;
-        // float mixed = (signal + noise) * 0.5f * vol;
-        float mixed = noise * vol; // All noise, no music.
+        // Crossfade signal with noise, so that when signal is small (i.e. quiet),
+        // noise is applied as if it was radio static. Then apply the volume level.
+        float mixed = (signal * (1.0f - g) + noise * g) * vol;
 
         int32_t out_i = (int32_t)mixed;
         if (out_i >  32767) out_i =  32767;
@@ -163,7 +159,7 @@ static void decode_task(void *pvParameters)
 
     while (1) {
         if (stage_len < sizeof(stage)) {
-            size_t n = audio_pipe_read(stage + stage_len, sizeof(stage) - stage_len, pdMS_TO_TICKS(200));
+            size_t n = audio_pipe_read(stage + stage_len, sizeof(stage) - stage_len, pdMS_TO_TICKS(10));
             if (n == 0) {
                 atomic_fetch_add(&g_audio_pipe_read_underruns, 1);
             }
