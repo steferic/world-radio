@@ -7,6 +7,7 @@ import {
   getNearest,
   getCacheInfo,
   isReady,
+  FILE_TYPES,
 } from './stations.mjs';
 import { getNowPlaying } from './now_playing.mjs';
 import { logEvent } from './events.mjs';
@@ -64,15 +65,28 @@ function sendJson(res, status, body, extraHeaders = {}) {
 const notFound = (res) => sendJson(res, 404, { error: 'not found' });
 const badReq = (res, message) => sendJson(res, 400, { error: message });
 
+// Parses ?fileType=mp3 (or aac). Returns { fileType } on success -- fileType
+// is null if the param was omitted, so callers can pass it straight through.
+// Returns { error } for anything else the client sent (e.g. ?fileType=ogg).
+function parseFileType(url) {
+  const raw = url.searchParams.get('fileType');
+  if (raw === null) return { fileType: null };
+  const v = raw.trim().toLowerCase();
+  if (!FILE_TYPES.has(v)) {
+    return { error: `fileType must be one of: ${[...FILE_TYPES].join(', ')}` };
+  }
+  return { fileType: v };
+}
+
 // :id can arrive as either the integer index (the primary handle for
 // surfing) or the upstream stationuuid (useful for stable cross-refresh
 // bookmarks). Integer wins when the token parses cleanly as one.
-async function resolveStation(token) {
+async function resolveStation(token, opts) {
   const asInt = Number.parseInt(token, 10);
   if (Number.isInteger(asInt) && String(asInt) === token) {
-    return getStation(asInt);
+    return getStation(asInt, opts);
   }
-  return getStationByUuid(token);
+  return getStationByUuid(token, opts);
 }
 
 async function withNowPlaying(station) {
@@ -112,6 +126,13 @@ export function createServer() {
         return sendJson(res, ok ? 200 : 503, { ok, cache: getCacheInfo() });
       }
 
+      // ?fileType=mp3|aac is accepted on any /api/stations* endpoint; parsed
+      // here once and validated even for endpoints that don't use it (a bad
+      // value should be an error the caller sees, not silently dropped).
+      const ft = parseFileType(url);
+      if (ft.error) return badReq(res, ft.error);
+      const fileType = ft.fileType;
+
       // Indexed list. now_playing is deliberately omitted here -- scraping
       // 200 streams per list request would take minutes and hammer the
       // upstream servers. Fetch per-station via /random or /:id instead.
@@ -124,19 +145,24 @@ export function createServer() {
           }
           const limitRaw = Number(url.searchParams.get('limit')) || 20;
           const limit = Math.min(Math.max(1, limitRaw), 100);
-          return sendJson(res, 200, await getNearest(lon, lat, limit), {
+          return sendJson(res, 200, await getNearest(lon, lat, limit, { fileType }), {
             'cache-control': 'public, max-age=60',
           });
         }
-        const stations = await listStations();
+        const stations = await listStations({ fileType });
         return sendJson(res, 200, { total: stations.length, stations }, {
           'cache-control': 'public, max-age=60',
         });
       }
 
       if (url.pathname === '/api/stations/random') {
-        const station = await getRandomStation();
-        if (!station) return sendJson(res, 503, { error: 'no stations cached yet' });
+        const station = await getRandomStation({ fileType });
+        if (!station) {
+          const msg = fileType
+            ? `no ${fileType} stations available`
+            : 'no stations cached yet';
+          return sendJson(res, 503, { error: msg });
+        }
         return sendJson(res, 200, await withNowPlaying(station));
       }
 
@@ -144,7 +170,7 @@ export function createServer() {
       // client that already knows the station id and just wants the track.
       const npMatch = url.pathname.match(/^\/api\/stations\/([^/]+)\/now-playing$/);
       if (npMatch) {
-        const station = await resolveStation(decodeURIComponent(npMatch[1]));
+        const station = await resolveStation(decodeURIComponent(npMatch[1]), { fileType });
         if (!station) return notFound(res);
         const now_playing = await getNowPlaying(station);
         return sendJson(res, 200, { id: station.id, uuid: station.uuid, now_playing });
@@ -152,7 +178,7 @@ export function createServer() {
 
       const stationMatch = url.pathname.match(/^\/api\/stations\/([^/]+)$/);
       if (stationMatch) {
-        const station = await resolveStation(decodeURIComponent(stationMatch[1]));
+        const station = await resolveStation(decodeURIComponent(stationMatch[1]), { fileType });
         if (!station) return notFound(res);
         return sendJson(res, 200, await withNowPlaying(station));
       }

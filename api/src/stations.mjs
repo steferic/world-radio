@@ -11,29 +11,33 @@ const RADIO_BROWSER_HOSTS = [
   'nl1.api.radio-browser.info',
 ];
 
-// limit is intentionally high (1500) because we filter aggressively below --
-// after dropping HLS mounts, playlist URLs, and non-MP3/AAC codecs we still
-// need to end up with ~MAX_STATIONS entries.
 const SEARCH_PATH =
-  '/json/stations/search?has_geo_info=true&hidebroken=true&order=clickcount&reverse=true&limit=1500';
+  '/json/stations/search?has_geo_info=true&hidebroken=true&order=clickcount&reverse=true&limit=500';
 
-// The ESP32 firmware ships MP3 and AAC decoders only. Anything else (OGG,
-// FLAC, Opus, etc.) is dropped at ingest so /random can't hand the device a
-// stream it physically can't play. Values here are compared case-insensitively
-// against radio-browser's `codec` field, which uses a small controlled set.
+// The ESP32 firmware ships MP3 and AAC decoders only. We DON'T drop other
+// codecs at ingest -- the browser demo happily plays OGG/FLAC, and other
+// clients may not care. Instead, every station gets a `format` label ('mp3',
+// 'aac', or null) and query endpoints accept ?fileType=mp3|aac to filter.
 const MP3_CODECS = new Set(['MP3', 'MPEG']);
 const AAC_CODECS = new Set(['AAC', 'AAC+', 'AACP', 'HE-AAC', 'HE-AACV2']);
 
-// Playlist / manifest file extensions. If the resolved URL points to one of
-// these, the "stream" is actually a text file the MCU would have to parse to
-// find the real audio -- reject it. Checked against the URL's pathname (query
-// string stripped) so `.../stream.mp3?token=...` still passes.
+// Playlist / manifest URLs -- the "stream" is a text file the MCU would have
+// to parse. Flagged here so the mp3/aac filter can exclude them; nothing is
+// dropped at ingest.
 const PLAYLIST_EXTS = new Set([
   '.m3u', '.m3u8', '.pls', '.asx', '.xspf', '.ram', '.rm', '.wpl',
 ]);
 
-function classifyCodec(codec) {
-  const c = (codec || '').trim().toUpperCase();
+export const FILE_TYPES = new Set(['mp3', 'aac']);
+
+// Returns 'mp3' | 'aac' | null. null means "not something the MCU decoders
+// can consume directly" -- either an unsupported codec, an HLS mount, or a
+// URL that points at a playlist file rather than raw audio bytes.
+function classifyFormat(raw) {
+  if (raw.hls === 1 || raw.hls === '1' || raw.hls === true) return null;
+  const stream = raw.url_resolved || raw.url || '';
+  if (isPlaylistUrl(stream)) return null;
+  const c = (raw.codec || '').trim().toUpperCase();
   if (MP3_CODECS.has(c)) return 'mp3';
   if (AAC_CODECS.has(c)) return 'aac';
   return null;
@@ -47,7 +51,7 @@ function isPlaylistUrl(url) {
     if (dot < 0) return false;
     return PLAYLIST_EXTS.has(path.slice(dot));
   } catch {
-    return true; // unparseable URL -- reject to be safe
+    return true; // unparseable URL -- treat as unplayable
   }
 }
 
@@ -74,16 +78,6 @@ function normalize(raw) {
   const stream_url = raw.url_resolved || raw.url;
   if (!stream_url) return null;
 
-  // MCU can't parse HLS manifests -- radio-browser flags these with hls=1.
-  if (raw.hls === 1 || raw.hls === '1' || raw.hls === true) return null;
-
-  // Even without the hls flag, a URL that ends in .m3u8/.pls/etc. serves a
-  // playlist file rather than raw audio bytes. Reject those too.
-  if (isPlaylistUrl(stream_url)) return null;
-
-  const format = classifyCodec(raw.codec);
-  if (!format) return null;
-
   const region = (raw.state || '').trim();
   const country = raw.countrycode || '';
   const location = [region, country].filter(Boolean).join(', ');
@@ -98,7 +92,10 @@ function normalize(raw) {
     lat,
     genre: (raw.tags || '').split(',')[0].trim(),
     codec: raw.codec || '',
-    format, // 'mp3' or 'aac' -- lets the MCU pick a decoder without string parsing
+    // 'mp3' | 'aac' | null -- null means the MCU can't play it directly.
+    // Used by the ?fileType= query filter; the field is always exposed so a
+    // client can see up front what it's being handed.
+    format: classifyFormat(raw),
     bitrate: raw.bitrate || 0,
     stream_url,
     homepage: raw.homepage || '',
@@ -167,16 +164,29 @@ export async function ensureFresh() {
   await inflight;
 }
 
-// Attach next_id / prev_id, wrapping at the ends so the ESP can "surf"
-// the list circularly without ever hitting a dead end.
-function withNav(s) {
+// Attach next_id / prev_id from a specific subset (defaults to the full
+// cache). When a fileType filter is active, surfing stays within the matching
+// subset so next-next-next won't wander onto a station the device can't play.
+function withNav(s, subset) {
   if (!s) return null;
-  const total = cache.stations.length;
+  const list = subset || cache.stations;
+  const total = list.length;
+  if (total === 0) return null;
+  // If the requested station is outside the current subset (e.g. asked for a
+  // specific id with ?fileType=mp3 but that id is an OGG stream) return null
+  // rather than making up neighbors -- the caller will 404.
+  const idx = list.findIndex((x) => x.id === s.id);
+  if (idx < 0) return null;
   return {
     ...s,
-    prev_id: (s.id - 1 + total) % total,
-    next_id: (s.id + 1) % total,
+    prev_id: list[(idx - 1 + total) % total].id,
+    next_id: list[(idx + 1) % total].id,
   };
+}
+
+function subsetFor(fileType) {
+  if (!fileType) return cache.stations;
+  return cache.stations.filter((s) => s.format === fileType);
 }
 
 // Slim shape for list responses: no stream URL (would encourage clients to
@@ -199,31 +209,36 @@ function slim(s) {
   };
 }
 
-export async function listStations() {
+export async function listStations({ fileType } = {}) {
   await ensureFresh();
-  return cache.stations.map(slim);
+  return subsetFor(fileType).map(slim);
 }
 
-export async function getStation(id) {
+export async function getStation(id, { fileType } = {}) {
   await ensureFresh();
-  return withNav(cache.byId.get(id) || null);
+  const s = cache.byId.get(id);
+  if (!s) return null;
+  return withNav(s, subsetFor(fileType));
 }
 
-export async function getStationByUuid(uuid) {
+export async function getStationByUuid(uuid, { fileType } = {}) {
   await ensureFresh();
-  return withNav(cache.byUuid.get(uuid) || null);
+  const s = cache.byUuid.get(uuid);
+  if (!s) return null;
+  return withNav(s, subsetFor(fileType));
 }
 
-export async function getRandomStation() {
+export async function getRandomStation({ fileType } = {}) {
   await ensureFresh();
-  if (cache.stations.length === 0) return null;
-  const i = Math.floor(Math.random() * cache.stations.length);
-  return withNav(cache.stations[i]);
+  const list = subsetFor(fileType);
+  if (list.length === 0) return null;
+  const i = Math.floor(Math.random() * list.length);
+  return withNav(list[i], list);
 }
 
-export async function getNearest(lon, lat, limit) {
+export async function getNearest(lon, lat, limit, { fileType } = {}) {
   await ensureFresh();
-  return cache.stations
+  return subsetFor(fileType)
     .map((s) => ({ s, d2: (s.lon - lon) ** 2 + (s.lat - lat) ** 2 }))
     .sort((a, b) => a.d2 - b.d2)
     .slice(0, limit)
