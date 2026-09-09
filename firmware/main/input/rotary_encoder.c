@@ -1,12 +1,13 @@
 #include "rotary_encoder.h"
 #include "config.h"
+#include "display/ui_event.h"
+#include "display/ui_task.h"
 
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 
 static const char *TAG = "rotary_encoder";
-
-static QueueHandle_t s_event_queue = NULL;
 
 // Half-step quadrature decode table (Ben Buxton). Index is
 // (prev_state << 2) | new_state, where each 2-bit state is (A << 1) | B.
@@ -32,34 +33,38 @@ static void IRAM_ATTR encoder_isr(void *arg)
     s_prev_state = new_state;
     s_accum += s_table[idx];
 
-    rotary_encoder_step_t event = 0;
+    // Raw-edge diagnostic. If nothing prints when we turn the knob, the
+    // ISR isn't firing at all. If only one of a/b ever changes across a
+    // full detent, the encoder's other line isn't reaching the pin, a
+    // hardware problem. A healthy detent a/b walking through 
+    // 11 -> 01 -> 00 -> 10 -> 11 (or the reverse).
+    esp_rom_printf("[rotary_encoder] edge A=%d B=%d state=%d idx=%d accum=%d\n",
+                   (int)a, (int)b, (int)new_state, (int)idx, (int)s_accum);
+
+    ui_event_type_t type;
     if (s_accum >= 4) {
         s_accum = 0;
-        event = ROTARY_ENCODER_INVERT ? -1 : +1;
+        type = ROTARY_ENCODER_INVERT ? UI_EVT_ROTATE_CCW : UI_EVT_ROTATE_CW;
     } else if (s_accum <= -4) {
         s_accum = 0;
-        event = ROTARY_ENCODER_INVERT ? +1 : -1;
+        type = ROTARY_ENCODER_INVERT ? UI_EVT_ROTATE_CW : UI_EVT_ROTATE_CCW;
+    } else {
+        return; // detent not yet reached, nothing to emit
     }
 
-    if (event != 0 && s_event_queue != NULL) {
-        BaseType_t hp_woken = pdFALSE;
-        // 0-tick timeout: if the consumer is behind, drop the event rather
-        // than blocking in an ISR. A fast spinner may lose a click; not the
-        // end of the world for station selection.
-        xQueueSendFromISR(s_event_queue, &event, &hp_woken);
-        if (hp_woken == pdTRUE) {
-            portYIELD_FROM_ISR();
-        }
+    esp_rom_printf("[rotary_encoder] detent %s\n",
+                   type == UI_EVT_ROTATE_CW ? "CW" : "CCW");
+
+    ui_event_t evt = { .type = type, .screen = NULL };
+    BaseType_t hp_woken = pdFALSE;
+    ui_post_from_isr(&evt, &hp_woken);
+    if (hp_woken == pdTRUE) {
+        portYIELD_FROM_ISR();
     }
 }
 
-esp_err_t rotary_encoder_init(QueueHandle_t event_queue)
+esp_err_t rotary_encoder_init(void)
 {
-    if (event_queue == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    s_event_queue = event_queue;
-
     gpio_config_t io = {
         .pin_bit_mask = (1ULL << ROTARY_ENCODER_GPIO_A) | (1ULL << ROTARY_ENCODER_GPIO_B),
         .mode = GPIO_MODE_INPUT,
@@ -73,14 +78,13 @@ esp_err_t rotary_encoder_init(QueueHandle_t event_queue)
     }
 
     // Seed the state machine with the pins' current levels so the first
-    // real edge doesn't decode against a bogus "00" prior state and emit a
-    // phantom click on boot.
+    // real edge doesn't decode against a false "00" prior state and emit
+    // a phantom click on boot.
     s_prev_state = (uint8_t)((gpio_get_level(ROTARY_ENCODER_GPIO_A) << 1)
                            | gpio_get_level(ROTARY_ENCODER_GPIO_B));
 
-    // gpio_install_isr_service is a per-app singleton; if the LCD (or any
-    // other module) already installed it, we get ESP_ERR_INVALID_STATE,
-    // which is fine -- we just wanted it installed.
+    // gpio_install_isr_service is a per-app singleton. If another module
+    // already installed it, we get ESP_ERR_INVALID_STATE, which is fine.
     err = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         return err;

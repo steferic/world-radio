@@ -3,13 +3,23 @@ idf_component_register(
         "main.c"
         "network/wifi_connect.c"
         "network/mem_probe.c"
+        "network/station_api.c"
         "audio/audio_pipe.c"
         "audio/http_stream.c"
         "audio/mp3_player.c"
         "input/volume_control.c"
+        "input/pushbutton.c"
+        "input/rotary_encoder.c"
+        "input/rotary_button.c"
         "display/lcd_driver.c"
         "display/font5x7.c"
-        "display/display_ui.c"
+        "display/ui_draw.c"
+        "display/ui_task.c"
+        "display/screens/boot_screen.c"
+        "display/screens/now_playing_screen.c"
+        "display/screens/menu_screen.c"
+        "display/screens/stations_screen.c"
+        "display/screens/wifi_setup_screen.c"
     INCLUDE_DIRS "."
     REQUIRES
         driver
@@ -18,8 +28,10 @@ idf_component_register(
         esp_event
         esp_http_client
         esp_system
+        esp_timer
         mbedtls
         nvs_flash
         minimp3
         esp_adc
+        json
 )
