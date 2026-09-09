@@ -1,29 +1,73 @@
+# -----------------------------------------------------------------------------
+# General
+# -----------------------------------------------------------------------------
 # Give app_main a bit more room; it just brings up Wi-Fi/tasks and returns.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
 
-# Needed if you ever point STREAM_URL at an https:// source.
-CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
-
-# LWIP TCP receive window a bit larger helps smooth out jittery HTTP audio.
-CONFIG_LWIP_TCP_WND_DEFAULT=5744
-CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
-
-# Set Target
+# -----------------------------------------------------------------------------
+# Target / partitioning
+# -----------------------------------------------------------------------------
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_IDF_TARGET_ESP32S3=y
-
-# Partition Table
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
 
-# 1) Debugging mbedTLS failures
+# -----------------------------------------------------------------------------
+# Networking (LWIP)
+# -----------------------------------------------------------------------------
+# Slightly larger TCP receive window smooths out jittery HTTP audio.
+CONFIG_LWIP_TCP_WND_DEFAULT=5744
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
+
+# -----------------------------------------------------------------------------
+# mbedTLS
+# -----------------------------------------------------------------------------
+# Dynamic buffers + asymmetric content len keep TLS RAM usage down when we're
+# only receiving audio (large in-buffer, small out-buffer).
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
-CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
+
+# TLS 1.2 lets a server send records up to 16384 bytes of plaintext. Streaming
+# origins that batch audio (or rewrite headers mid-stream, e.g. Icecast on a
+# sample-rate change) do send full 16 KiB records; with 8192 here we got
+# "requesting more data than fits" (-0x7100 / MBEDTLS_ERR_SSL_INTERNAL_ERROR)
+# mid-stream on real stations. The out side stays small because we never send
+# audio, only tiny HTTP request headers.
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=2048
+
+# Some Icecast/CDN setups issue a HelloRequest to rotate keys after N seconds
+# or N bytes; without this, mbedtls sees an unexpected handshake record and
+# tears the session down. Cheap safety net regardless of whether any specific
+# origin actually uses it.
+CONFIG_MBEDTLS_SSL_RENEGOTIATION=y
+
+# CA store. FULL costs ~40 KB more flash than the default compact bundle but
+# covers the long tail of smaller / regional CAs, so far fewer random stations
+# fail with MBEDTLS_ERR_X509_CERT_VERIFY_FAILED (-0x3000). Stations still fail
+# when their server doesn't send required intermediates -- can't fix that from
+# our side.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# TLS debug. Verbose (4) logs every record and state transition -- absolutely
+# necessary when hunting a "why does mbedtls kill this stream" bug, but very
+# noisy in normal operation. To quiet it without a rebuild, add
+# `esp_log_level_set("mbedtls", ESP_LOG_WARN);` at boot in main.c. To turn it
+# off entirely, flip both lines off here and rebuild.
+# CONFIG_MBEDTLS_DEBUG=y
+# CONFIG_MBEDTLS_DEBUG_LEVEL_VERBOSE=y
+# CONFIG_MBEDTLS_DEBUG_LEVEL=4
+
+# -----------------------------------------------------------------------------
+# Heap / diagnostics
+# -----------------------------------------------------------------------------
 CONFIG_HEAP_TASK_TRACKING=y
 
-# 2) Adding PSRAM
+# -----------------------------------------------------------------------------
+# PSRAM (settings that apply to both n16r8 octal and n8r2 quad; the board-
+# specific sdkconfig.defaults.* fragments pick octal vs quad mode.)
+# -----------------------------------------------------------------------------
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_TYPE_AUTO=y
 CONFIG_SPIRAM_SPEED_80M=y

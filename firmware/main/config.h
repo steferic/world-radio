@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sdkconfig.h"
+#include "config/gpio.h"
 
 // ---------------------------------------------------------------------------
 // Wi-Fi
@@ -12,7 +13,25 @@
 // ---------------------------------------------------------------------------
 // Stream
 // ---------------------------------------------------------------------------
+// STREAM_USE_API = 1 -> the fetch task picks a random MP3 station from the
+// world-radio API on every (re)connect and shuffle. = 0 -> it ignores the
+// API and pins to STREAM_URL below (useful for isolating stream/TLS bugs
+// from API bugs). station_api.c and the shuffle plumbing are always built
+// so flipping this is a rebuild-only change.
+#define STREAM_USE_API          0
 #define STREAM_URL              "https://italiandancenetwork.com/stream.mp3"
+
+// Base URL of the world-radio API (see api/README.md). Only used when
+// STREAM_USE_API is 1. No trailing slash.
+#define STATION_API_BASE_URL    "https://world-radio-v370.onrender.com"
+#define STATION_API_RANDOM_URL  STATION_API_BASE_URL "/api/stations/random"
+
+// The API can hand back either MP3 or AAC; this firmware only decodes MP3
+// (see minimp3 in audio/mp3_player.c). If a /random response comes back with
+// a non-MP3 format, we throw it away and ask for another one, up to this
+// many times before giving up on this cycle and letting the outer backoff
+// retry the whole thing.
+#define STATION_API_MAX_ATTEMPTS 20
 
 // Size of the byte ring buffer sitting between the HTTP fetch task and the
 // MP3 decode/I2S task. Bigger = more resilience to network jitter/stalls,
@@ -20,21 +39,8 @@
 #define AUDIO_RINGBUF_BYTES     (512 * 1024)
 
 // ---------------------------------------------------------------------------
-// GPIO —> MAX98357A I2S DAC/amp wiring
-// ---------------------------------------------------------------------------
-#if CONFIG_SPIRAM_MODE_OCT
-    #include "boards/n16r8.h"
-#elif CONFIG_SPIRAM_MODE_QUAD
-    #include "boards/n8r2.h"
-#else
-    #error "No board detected: set CONFIG_SPIRAM_MODE_QUAD or _OCT in the sdkconfig fragment for the target board."
-#endif
-
-// ---------------------------------------------------------------------------
 // Volume potentiometer
 // ---------------------------------------------------------------------------
-#define VOLUME_POT_GPIO          GPIO_NUM_4
-
 // Set to 1 or 0 to determine the direction of the potentiometer. This is
 // a firmware fix in case the hardware wiring is accidentally inverted.
 #define VOLUME_POT_INVERT        1
@@ -47,26 +53,29 @@
 #define VOLUME_SMOOTHING_ALPHA   0.2f
 
 // ---------------------------------------------------------------------------
-// Rotary encoder (station select) (not yet implemented)
+// Pushbutton (shuffle / next-random)
 // ---------------------------------------------------------------------------
-#define ROTARY_ENCODER_GPIO_A     GPIO_NUM_15
-#define ROTARY_ENCODER_GPIO_B     GPIO_NUM_16
+// Anything shorter than this between edges is treated as switch bounce and
+// dropped in the ISR. 30 ms is comfortably longer than any mechanical bounce
+// on a normal tact switch, without feeling laggy on a real press.
+#define DEBOUNCE_US             (30 * 1000)
 
+// ---------------------------------------------------------------------------
+// Rotary encoder (station select)
+// ---------------------------------------------------------------------------
 // Invert the direction the R.E. turns, in case the hardware wiring in inverted.
 #define ROTARY_ENCODER_INVERT     0
 
 #define ROTARY_ENCODER_POLL_INTERVAL_MS 30
 
+// A hold on the rotary's built-in switch longer than this is classified as
+// a LONG press. Used as an "escape hatch" gesture from deep menus back to
+// the root screen.
+#define LONG_PRESS_US             (600 * 1000)
+
 // ---------------------------------------------------------------------------
 // LCD (ST7789, 240x320 SPI TFT)
 // ---------------------------------------------------------------------------
-#define LCD_SPI_HOST        SPI2_HOST
-#define LCD_SCK_GPIO        GPIO_NUM_2
-#define LCD_MOSI_GPIO       GPIO_NUM_42
-#define LCD_CS_GPIO         GPIO_NUM_39
-#define LCD_DC_GPIO         GPIO_NUM_40
-#define LCD_RESET_GPIO      GPIO_NUM_41
-
 // Panel dimensions as seen by software -- these must match the current
 // MADCTL rotation below, not the panel's native portrait dimensions. A 90/
 // 270 degree rotation swaps width and height; 0/180 keeps them as-is.

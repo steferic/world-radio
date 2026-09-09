@@ -3,8 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 
-void ui_draw_glyph(int x, int y, char ch, uint16_t color, uint16_t bg, int scale)
-{
+void ui_draw_glyph(int x, int y, char ch, uint16_t color, uint16_t bg, int scale) {
     uint8_t cols[FONT5X7_WIDTH];
     font5x7_lookup(ch, cols);
 
@@ -27,11 +26,10 @@ void ui_draw_glyph(int x, int y, char ch, uint16_t color, uint16_t bg, int scale
     lcd_draw_bitmap(x, y, w, h, buf);
 }
 
-// Renders `text` glyph-by-glyph starting at (x, y), no clearing. Used by
+// Renders 'text' glyph-by-glyph starting at (x, y), no clearing. Used by
 // ui_draw_field / ui_draw_field_centered after they've cleared the field.
 static void draw_text_run(int x, int y, const char *text,
-                          uint16_t color, uint16_t bg, int scale)
-{
+                          uint16_t color, uint16_t bg, int scale) {
     int cell_w = UI_CELL_W(scale);
     int cx = x;
     for (const char *p = text; *p != '\0'; p++) {
@@ -40,10 +38,9 @@ static void draw_text_run(int x, int y, const char *text,
     }
 }
 
-// Truncates `text` to fit `max_chars` cells, appending ".." if truncated.
-// Returns a pointer into `out`, which must be at least max_chars+1 bytes.
-static const char *truncated(const char *text, char *out, size_t out_cap, int max_chars)
-{
+// Truncates 'text' to fit 'max_chars' cells, appending ".." if truncated.
+// Returns a pointer into 'out', which must be at least max_chars+1 bytes.
+static const char *truncated(const char *text, char *out, size_t out_cap, int max_chars) {
     size_t len = strlen(text);
     if ((int)len <= max_chars) {
         snprintf(out, out_cap, "%s", text);
@@ -55,8 +52,7 @@ static const char *truncated(const char *text, char *out, size_t out_cap, int ma
 }
 
 void ui_draw_field(int x, int y, int max_width, int scale,
-                   const char *text, uint16_t color, uint16_t bg)
-{
+                   const char *text, uint16_t color, uint16_t bg) {
     int cell_w = UI_CELL_W(scale);
     int line_h = UI_CELL_H(scale);
 
@@ -77,8 +73,7 @@ void ui_draw_field(int x, int y, int max_width, int scale,
 }
 
 void ui_draw_field_centered(int x, int y, int max_width, int scale,
-                            const char *text, uint16_t color, uint16_t bg)
-{
+                            const char *text, uint16_t color, uint16_t bg) {
     int cell_w = UI_CELL_W(scale);
     int line_h = UI_CELL_H(scale);
 
@@ -96,9 +91,8 @@ void ui_draw_field_centered(int x, int y, int max_width, int scale,
     char buf[64];
     const char *s = truncated(text, buf, sizeof(buf), max_chars);
 
-    // Center on the actual drawn width (which is one glyph_width per char
-    // plus the trailing inter-char gap of the last cell -- we can just use
-    // cell_w * len since draw_text_run advances by cell_w each glyph).
+    // Establish a center on the actual drawn width, which is one glyph_width per char
+    // plus the trailing inter-char gap of the last cell.
     int len = (int)strlen(s);
     int drawn_w = len * cell_w;
     int offset = (max_width - drawn_w) / 2;
@@ -107,11 +101,8 @@ void ui_draw_field_centered(int x, int y, int max_width, int scale,
     draw_text_run(x + offset, y, s, color, bg, scale);
 }
 
-void ui_split_two_lines(const char *s,
-                        char *l1, size_t l1_cap,
-                        char *l2, size_t l2_cap,
-                        size_t max_chars)
-{
+void ui_split_two_lines(const char *s, char *l1, size_t l1_cap,
+                        char *l2, size_t l2_cap, size_t max_chars) {
     l1[0] = '\0';
     l2[0] = '\0';
 
@@ -127,7 +118,7 @@ void ui_split_two_lines(const char *s,
         split--;
     }
     if (split == 0) {
-        split = max_chars; // no space to break on -- hard-break instead
+        split = max_chars; // no space to break on, so hard-break instead
     }
 
     snprintf(l1, l1_cap, "%.*s", (int)split, s);
@@ -146,7 +137,6 @@ void ui_split_two_lines(const char *s,
     }
 }
 
-void ui_draw_clear_screen(void)
-{
+void ui_draw_clear_screen(void) {
     lcd_fill_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_COLOR_BLACK);
 }

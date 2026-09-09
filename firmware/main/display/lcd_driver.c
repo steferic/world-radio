@@ -57,8 +57,7 @@ static inline void lcd_send_data_byte(uint8_t data)
     lcd_send_data(&data, 1);
 }
 
-// Sets the rectangular window the next RAMWR will fill, inclusive on both
-// ends (x1/y1 are the last column/row, not one-past-the-end).
+// Sets the rectangular window the next RAMWR will fill, inclusive on both ends.
 static void lcd_set_addr_window(int x0, int y0, int x1, int y1)
 {
     uint8_t caset[4] = { (uint8_t)(x0 >> 8), (uint8_t)(x0 & 0xFF), (uint8_t)(x1 >> 8), (uint8_t)(x1 & 0xFF) };
@@ -127,12 +126,9 @@ esp_err_t lcd_driver_init(void)
     lcd_send_data_byte(0x55); // 16 bits/pixel, RGB565
 
     lcd_send_cmd(CMD_MADCTL);
-    lcd_send_data_byte(LCD_MADCTL); // rotation/mirroring -- see config.h if the image is wrong
+    lcd_send_data_byte(LCD_MADCTL); // rotation/mirroring. Alter config.h if the image is wrong.
 
-    // Most ST7789 panels need this to show colors correctly -- if a white
-    // background renders as black (or colors otherwise look inverted),
-    // that's this setting, not a wiring problem. Remove it if your panel
-    // already looks right without it.
+    // This is a color inversion flag, useful for ST7789 modules.
     lcd_send_cmd(CMD_INVON);
 
     lcd_send_cmd(CMD_NORON);
@@ -159,9 +155,9 @@ void lcd_fill_rect(int x, int y, int w, int h, uint16_t color)
 
     lcd_set_addr_window(x, y, x + w - 1, y + h - 1);
 
-    // One row-sized static buffer, sent once per row, instead of
-    // allocating a full w*h buffer -- keeps a full-screen clear cheap on
-    // both stack and heap.
+    // Instead of allocating a large w*h-sized 2D buffer, we save on stack
+    // and heap size by sending one row-length buffer, for as many rows as
+    // we need, one after another.
     static uint16_t line_buf[LCD_WIDTH];
     uint16_t swapped = (uint16_t)((color << 8) | (color >> 8)); // ST7789 wants big-endian RGB565 over SPI
     for (int i = 0; i < w; i++) {
@@ -190,9 +186,8 @@ void lcd_draw_bitmap(int x, int y, int w, int h, const uint16_t *pixels)
 
     lcd_set_addr_window(x, y, x + w - 1, y + h - 1);
 
-    // Byte-swap into a scratch buffer -- the caller's buffer is in the
-    // ESP32's native (little-endian) order, but ST7789 wants big-endian
-    // RGB565 over the wire.
+    // Byte-swap into a scratch buffer. The caller's 'pixels' buffer is in the
+    // ESP32's native little-endian order, but ST7789 wants big-endian RGB565.
     static uint16_t swap_buf[LCD_WIDTH];
     lcd_set_dc(1);
     for (int row = 0; row < h; row++) {
