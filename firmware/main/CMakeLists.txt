@@ -6,6 +6,7 @@ idf_component_register(
         "network/station_api.c"
         "audio/audio_pipe.c"
         "audio/http_stream.c"
+        "audio/icy_demuxer.c"
         "audio/audio_output.c"
         "audio/audio_decoder.c"
         "audio/mp3_decoder.c"

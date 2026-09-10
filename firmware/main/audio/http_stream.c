@@ -3,6 +3,7 @@
 #include "audio_pipe.h"
 #include "audio_player.h"
 #include "audio_decoder.h"
+#include "icy_demuxer.h"
 #include "network/station_api.h"
 #include "display/screens/now_playing_screen.h"
 
@@ -25,6 +26,42 @@ atomic_uint_fast32_t g_http_bytes_read_total = 0;
 // stream to tear down and a fresh random station to be picked. Cleared by
 // the consumer once acknowledged.
 static atomic_bool s_shuffle_pending = false;
+
+// Captured by the HTTP event handler as response headers arrive, then read
+// after esp_http_client_fetch_headers() returns. We do it this way rather
+// than via esp_http_client_get_header() because some IDF versions don't
+// expose non-standard headers (like icy-metaint) through that API even when
+// they were on the wire. The event handler sees every header the parser
+// sees, so this is bulletproof. Reset to 0 at the top of stream_once().
+static size_t s_captured_metaint = 0;
+
+// Log every response header so we can see exactly what the server sends.
+// Also captures icy-metaint into s_captured_metaint for the demuxer to use.
+static esp_err_t http_event_handler(esp_http_client_event_t *evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_HEADER) {
+        // Print every header. This is a lot on the first connect, but it's
+        // invaluable for debugging ICY / redirect / content-type issues and
+        // the traffic drops to zero once the stream is running.
+        ESP_LOGI(TAG, "hdr: %s: %s",
+                 evt->header_key   ? evt->header_key   : "(null)",
+                 evt->header_value ? evt->header_value : "(null)");
+
+        if (evt->header_key && evt->header_value
+            && strcasecmp(evt->header_key, "icy-metaint") == 0) {
+            char *endp = NULL;
+            unsigned long v = strtoul(evt->header_value, &endp, 10);
+            // Same sanity bounds as before: reject 0 and anything absurdly
+            // large that would let a corrupt header stall the demuxer.
+            if (v > 0 && v <= (1UL << 20) && endp != evt->header_value) {
+                s_captured_metaint = (size_t)v;
+            } else {
+                ESP_LOGW(TAG, "ignoring bogus icy-metaint '%s'", evt->header_value);
+            }
+        }
+    }
+    return ESP_OK;
+}
 
 #define READ_CHUNK_SIZE 4096
 #define BACKOFF_MIN_MS  1000
@@ -68,11 +105,16 @@ static stream_result_t stream_once(const char *url)
     url_buf[sizeof(url_buf) - 1] = '\0';
 
     for (int hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+        // Clear before opening the client so headers from a prior hop /
+        // connection don't leak into this one's demuxer init.
+        s_captured_metaint = 0;
+
         esp_http_client_config_t config = {
             .url = url_buf,
             .timeout_ms = 10000,
             .buffer_size = 2048,
             .crt_bundle_attach = esp_crt_bundle_attach, // only used if URL is https
+            .event_handler = http_event_handler,        // logs headers + captures icy-metaint
             // We follow redirects manually below rather than relying on
             // esp_http_client's built-in follower: the built-in path assumes
             // esp_http_client_perform(), but we use the open/fetch/read
@@ -93,10 +135,12 @@ static stream_result_t stream_once(const char *url)
         // audio fetch only; station_api.c keeps the honest UA for API calls.
         esp_http_client_set_header(client, "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0");
-        // Deliberately not sending "Icy-MetaData: 1" -- see the note in
-        // config.h. If your server injects ICY metadata anyway, that will
-        // corrupt the MP3 stream and this player will need a metadata-
-        // stripping stage.
+        // Ask Shoutcast/Icecast servers to interleave "StreamTitle=..." blocks
+        // into the byte stream. If the server responds with an icy-metaint
+        // header we route reads through icy_demuxer to strip the metadata
+        // before it reaches the audio pipe; if it doesn't, this header is a
+        // no-op and playback is unchanged.
+        esp_http_client_set_header(client, "Icy-MetaData", "1");
 
         esp_err_t err = esp_http_client_open(client, 0);
         if (err != ESP_OK) {
@@ -149,6 +193,27 @@ static stream_result_t stream_once(const char *url)
             return STREAM_UNHEALTHY;
         }
 
+        // Detect ICY interleave. The value was captured by http_event_handler
+        // as headers came off the wire (bypasses ESP-IDF's get_header, which
+        // has been observed to hide non-standard response headers in some
+        // versions). If nothing was captured, log so it's obvious in the
+        // monitor -- silent passthrough was the bug that made "unknown title
+        // / unknown artist" so hard to debug.
+        // Static because the state buffer is ~4 KB and we don't want to spend
+        // that on the http_stream task stack; there's only one connection in
+        // flight at a time so a static shared instance is safe.
+        static icy_demuxer_t demux;
+        size_t metaint = s_captured_metaint;
+        if (metaint == 0) {
+            ESP_LOGW(TAG, "no valid icy-metaint response header -- "
+                          "demuxer will run in passthrough (no ICY metadata will be parsed). "
+                          "Check the 'hdr:' lines above to see what headers the server actually sent.");
+        } else {
+            ESP_LOGI(TAG, "icy-metaint=%u -- demuxer will emit metadata every %u audio bytes",
+                     (unsigned)metaint, (unsigned)metaint);
+        }
+        icy_demuxer_init(&demux, metaint);
+
         int64_t open_us = esp_timer_get_time();
         size_t bytes_this_connection = 0;
         stream_result_t result = STREAM_ENDED_CLEAN;
@@ -185,15 +250,12 @@ static stream_result_t stream_once(const char *url)
                 break;
             }
 
-            // Block (with a timeout) so a full ring buffer applies
-            // backpressure instead of silently corrupting the stream. If
-            // the decode side has truly stalled for 2s something else is
-            // wrong, so just drop this chunk and keep the connection
-            // alive rather than wedging forever.
-            if (!audio_pipe_write(buf, (size_t)n, pdMS_TO_TICKS(2000))) {
-                atomic_fetch_add(&g_audio_pipe_write_drops, 1);
-                ESP_LOGW(TAG, "ring buffer full, dropping %d bytes", n);
-            }
+            // Route through the ICY demuxer: audio bytes are forwarded to
+            // the ring buffer (with the same 2s backpressure semantics as
+            // before), and any interleaved metadata blocks are parsed and
+            // dispatched to now_playing. If metaint==0 this is a straight
+            // passthrough.
+            icy_demuxer_feed(&demux, buf, (size_t)n);
 
             atomic_fetch_add(&g_http_bytes_read_total, (uint32_t)n);
             bytes_this_connection += (size_t)n;
@@ -255,16 +317,28 @@ void http_stream_task(void *pvParameters)
             continue;
         }
         now_playing_set_station(station.name, station.region, station.country, station.genre);
-        now_playing_set_track("UNKNOWN TITLE", "UNKNOWN ARTIST");
+        // Placeholder shown until the ICY demuxer dispatches a real
+        // StreamTitle. A single "-" reads as intentional ("nothing to show
+        // here") rather than as broken metadata ("UNKNOWN TITLE"), which
+        // matters for talk/news streams that legitimately never populate
+        // per-track info.
+        now_playing_set_track("-", "-");
         url = station.stream_url;
         fmt_hint = audio_format_from_string(station.format);
 #else
-        // TLS-bypass mode: same URL every cycle, so a shuffle press just
-        // reconnects to the pinned Italian Dance Network stream. Keeps the
-        // display update so a press still visibly "does something".
+        // Pinned-URL mode: same URL every cycle, so a shuffle press just
+        // reconnects to the pinned stream. Keeps the display update so a press
+        // still visibly "does something". The ICY demuxer will overwrite the
+        // "UNKNOWN" track fields with real StreamTitle metadata as soon as
+        // the first metadata block arrives.
         (void)api_scratch;
-        now_playing_set_station("ITALIAN DANCE NETWORK", "MILAN", "ITALY", "ITALIAN");
-        now_playing_set_track("UNKNOWN TITLE", "UNKNOWN ARTIST");
+        now_playing_set_station("SOMAFM GROOVE SALAD", "SAN FRANCISCO", "USA", "AMBIENT CHILL");
+        // Placeholder shown until the ICY demuxer dispatches a real
+        // StreamTitle. A single "-" reads as intentional ("nothing to show
+        // here") rather than as broken metadata ("UNKNOWN TITLE"), which
+        // matters for talk/news streams that legitimately never populate
+        // per-track info.
+        now_playing_set_track("-", "-");
         url = STREAM_URL;
         fmt_hint = AUDIO_FORMAT_MP3;
 #endif

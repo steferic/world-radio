@@ -195,12 +195,6 @@ esp_err_t lcd_driver_init(void)
     lcd_send_cmd(CMD_DISPON);
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // DEBUGGING
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    lcd_send_cmd(0x28);  // DISPOFF -- valid on both chips
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    lcd_send_cmd(0x29);  // DISPON
-
     lcd_fill_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_COLOR_BLACK);
 
     ESP_LOGI(TAG, "%s ready (%dx%d)", chip_name, LCD_WIDTH, LCD_HEIGHT);

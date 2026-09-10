@@ -19,7 +19,11 @@
 // from API bugs). station_api.c and the shuffle plumbing are always built
 // so flipping this is a rebuild-only change.
 #define STREAM_USE_API          1
-#define STREAM_URL              "https://italiandancenetwork.com/stream.mp3"
+// SomaFM Groove Salad -- verified to send both header-mode ICY fields and
+// interleaved metadata (icy-metaint: 45000, StreamTitle='Artist - Title').
+// Good for exercising the ICY demuxer + now-playing UI path end-to-end.
+#define STREAM_URL              "http://ice1.somafm.com/groovesalad-128-mp3"
+// #define STREAM_URL              "https://italiandancenetwork.com/stream.mp3"
 
 // Base URL of the world-radio API (see api/README.md). Only used when
 // STREAM_USE_API is 1. No trailing slash.
@@ -45,7 +49,7 @@
 // ---------------------------------------------------------------------------
 // Set to 1 or 0 to determine the direction of the potentiometer. This is
 // a firmware fix in case the hardware wiring is accidentally inverted.
-#define VOLUME_POT_INVERT        1
+#define VOLUME_POT_INVERT        0
 
 // How often the pot is sampled
 #define VOLUME_POLL_INTERVAL_MS  30
