@@ -18,7 +18,7 @@
 // API and pins to STREAM_URL below (useful for isolating stream/TLS bugs
 // from API bugs). station_api.c and the shuffle plumbing are always built
 // so flipping this is a rebuild-only change.
-#define STREAM_USE_API          0
+#define STREAM_USE_API          1
 #define STREAM_URL              "https://italiandancenetwork.com/stream.mp3"
 
 // Base URL of the world-radio API (see api/README.md). Only used when
@@ -26,11 +26,13 @@
 #define STATION_API_BASE_URL    "https://world-radio-v370.onrender.com"
 #define STATION_API_RANDOM_URL  STATION_API_BASE_URL "/api/stations/random"
 
-// The API can hand back either MP3 or AAC; this firmware only decodes MP3
-// (see minimp3 in audio/mp3_player.c). If a /random response comes back with
-// a non-MP3 format, we throw it away and ask for another one, up to this
-// many times before giving up on this cycle and letting the outer backoff
-// retry the whole thing.
+// The API can hand back MP3, AAC, or other formats (OGG, HLS, etc.). The
+// firmware decodes MP3 (minimp3 in audio/mp3_decoder.c) and AAC (libhelix
+// via audio/aac_decoder.c, if the helix-aac component's sources are
+// vendored -- see components/helix-aac/README.md). If /random hands back a
+// format we can't decode, we throw it away and ask for another one, up to
+// this many times before giving up on this cycle and letting the outer
+// backoff retry the whole thing.
 #define STATION_API_MAX_ATTEMPTS 20
 
 // Size of the byte ring buffer sitting between the HTTP fetch task and the
@@ -74,22 +76,45 @@
 #define LONG_PRESS_US             (600 * 1000)
 
 // ---------------------------------------------------------------------------
-// LCD (ST7789, 240x320 SPI TFT)
+// LCD (240x320 SPI TFT)
 // ---------------------------------------------------------------------------
+// Which controller chip is on the panel. The init sequence in lcd_driver.c 
+// branches on this.
+#define LCD_CONTROLLER_ST7789    0
+#define LCD_CONTROLLER_ILI9341   1
+#define LCD_CONTROLLER           LCD_CONTROLLER_ILI9341
+
 // Panel dimensions as seen by software -- these must match the current
 // MADCTL rotation below, not the panel's native portrait dimensions. A 90/
 // 270 degree rotation swaps width and height; 0/180 keeps them as-is.
 #define LCD_WIDTH           320
 #define LCD_HEIGHT          240
+
+// ST7789 tolerates 40 MHz on short wires; ILI9341 is datasheet-rated at
+// 10 MHz for writes and typically works up to ~26 MHz in practice. If you
+// see snow or misaligned pixels after switching to ILI9341, drop this.
 #define LCD_SPI_CLOCK_HZ    (40 * 1000 * 1000)
 
-// MADCTL (ST7789 command 0x36) sets rotation/mirroring. Bit 7=MY (row
-// order), bit 6=MX (column order), bit 5=MV (row/column exchange).
-// Common values for this panel:
+// MADCTL (command 0x36) sets rotation/mirroring. Bit 7=MY (row order),
+// bit 6=MX (column order), bit 5=MV (row/column exchange). Same encoding
+// on ST7789 and ILI9341, but the two panel families are wired to their
+// respective driver chips differently, so a given MADCTL value produces
+// different rotations/mirrors on each. Pick per LCD_CONTROLLER.
+//
+// For ST7789 (no-name Chinese 2.4"):
 //   0x00 -- native portrait,        240 wide x 320 tall
-//   0x60 -- rotated 90 deg CW,      320 wide x 240 tall  <- current
+//   0x60 -- rotated 90 deg CW,      320 wide x 240 tall
 //   0xC0 -- rotated 180 deg,        240 wide x 320 tall
 //   0xA0 -- rotated 90 deg CCW,     320 wide x 240 tall
+//
+// For ILI9341 (Adafruit 1770): same landscape rotation but with MX
+// cleared -- the ILI9341 panel doesn't need column-address mirroring the
+// way the ST7789 panel does.
+//   0x00 -- native portrait,        240 wide x 320 tall
+//   0x20 -- rotated 90 deg CW,      320 wide x 240 tall  <- current
+//   0x80 -- rotated 180 deg,        240 wide x 320 tall
+//   0xE0 -- rotated 90 deg CCW,     320 wide x 240 tall
+//
 // Changing this WITHOUT updating LCD_WIDTH/LCD_HEIGHT to match will send
 // pixel data outside the panel's actual addressable area in that orientation.
-#define LCD_MADCTL           0x60
+#define LCD_MADCTL           0x20

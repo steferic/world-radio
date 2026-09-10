@@ -3,8 +3,9 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-// Brings up the ST7789 over SPI, runs its init sequence,
-// and clears the screen to black. Call once at startup.
+// Brings up the panel over SPI, runs the init sequence appropriate for
+// LCD_CONTROLLER (see config.h -- ST7789 or ILI9341), and clears the
+// screen to black. Call once at startup.
 esp_err_t lcd_driver_init(void);
 
 // Fills a rectangle with a single RGB565 color. Coordinates are clipped to
