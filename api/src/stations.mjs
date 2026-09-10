@@ -33,7 +33,8 @@ export const FILE_TYPES = new Set(['mp3', 'aac']);
 // Returns 'mp3' | 'aac' | null. null means "not something the MCU decoders
 // can consume directly" -- either an unsupported codec, an HLS mount, or a
 // URL that points at a playlist file rather than raw audio bytes.
-function classifyFormat(raw) {
+// Exported so the demo module can reuse the same classification.
+export function classifyFormat(raw) {
   if (raw.hls === 1 || raw.hls === '1' || raw.hls === true) return null;
   const stream = raw.url_resolved || raw.url || '';
   if (isPlaylistUrl(stream)) return null;

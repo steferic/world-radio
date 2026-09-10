@@ -9,6 +9,13 @@ import {
   isReady,
   FILE_TYPES,
 } from './stations.mjs';
+import {
+  listCountries,
+  getCountry,
+  getDemoStation,
+  getDemoCacheInfo,
+  isReady as demoReady,
+} from './demo.mjs';
 import { getNowPlaying } from './now_playing.mjs';
 import { logEvent } from './events.mjs';
 
@@ -123,8 +130,55 @@ export function createServer() {
 
       if (url.pathname === '/api/health') {
         const ok = isReady();
-        return sendJson(res, ok ? 200 : 503, { ok, cache: getCacheInfo() });
+        return sendJson(res, ok ? 200 : 503, {
+          ok,
+          cache: getCacheInfo(),
+          demo: getDemoCacheInfo(),
+        });
       }
+
+      // --- /api/demo/* : curated station set for the hardware demo. -----
+      // Independent of the main /api/stations cache; see demo.mjs.
+      // Route order matters: exact "/api/demo" first, then the two-segment
+      // "/:country/:stream_id", then the one-segment "/:country".
+
+      if (url.pathname === '/api/demo') {
+        const countries = await listCountries();
+        if (countries.length === 0) {
+          return sendJson(res, 503, { error: 'demo list not populated yet' });
+        }
+        const total_stations = countries.reduce((n, c) => n + c.count, 0);
+        return sendJson(res, 200, {
+          total_countries: countries.length,
+          total_stations,
+          countries,
+        }, { 'cache-control': 'public, max-age=300' });
+      }
+
+      const demoStationMatch = url.pathname.match(/^\/api\/demo\/([^/]+)\/([^/]+)$/);
+      if (demoStationMatch) {
+        const country = decodeURIComponent(demoStationMatch[1]).toLowerCase();
+        const streamIdRaw = decodeURIComponent(demoStationMatch[2]);
+        const streamId = Number.parseInt(streamIdRaw, 10);
+        if (!Number.isInteger(streamId) || String(streamId) !== streamIdRaw || streamId < 0) {
+          return badReq(res, 'stream_id must be a non-negative integer');
+        }
+        if (!demoReady()) return sendJson(res, 503, { error: 'demo list not populated yet' });
+        const station = await getDemoStation(country, streamId);
+        if (!station) return notFound(res);
+        return sendJson(res, 200, await withNowPlaying(station));
+      }
+
+      const demoCountryMatch = url.pathname.match(/^\/api\/demo\/([^/]+)$/);
+      if (demoCountryMatch) {
+        const country = decodeURIComponent(demoCountryMatch[1]).toLowerCase();
+        if (!demoReady()) return sendJson(res, 503, { error: 'demo list not populated yet' });
+        const c = await getCountry(country);
+        if (!c) return notFound(res);
+        return sendJson(res, 200, c, { 'cache-control': 'public, max-age=300' });
+      }
+
+      // --- end /api/demo/* ---------------------------------------------
 
       // ?fileType=mp3|aac is accepted on any /api/stations* endpoint; parsed
       // here once and validated even for endpoints that don't use it (a bad
