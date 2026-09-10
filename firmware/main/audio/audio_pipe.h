@@ -7,11 +7,11 @@
 #include "freertos/FreeRTOS.h"
 
 // A byte-oriented ring buffer that decouples the HTTP fetch task from the
-// MP3 decode/I2S task, so a slow network read never directly stalls (or a
+// audio decode/I2S task, so a slow network read never directly stalls (or a
 // slow I2S write never directly backs up) the other side.
 
 // Debug/monitoring counters, incremented at the call sites that hit each
-// failure mode (http_stream.c on a full-buffer drop, mp3_player.c on a
+// failure mode (http_stream.c on a full-buffer drop, audio_player.c on a
 // zero-byte read). Read with atomic_load(); a monitor task can diff
 // successive readings to get a per-interval rate. Not reset automatically.
 extern atomic_uint_fast32_t g_audio_pipe_write_drops;

@@ -1,7 +1,7 @@
 #include "config.h"
 #include "network/wifi_connect.h"
 #include "audio/audio_pipe.h"
-#include "audio/mp3_player.h"
+#include "audio/audio_player.h"
 #include "audio/http_stream.h"
 #include "input/volume_control.h"
 #include "input/pushbutton.h"
@@ -130,7 +130,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Wifi up");
 
     ESP_ERROR_CHECK(audio_pipe_init(AUDIO_RINGBUF_BYTES));
-    ESP_ERROR_CHECK(mp3_player_init());
+    ESP_ERROR_CHECK(audio_player_init());
     ESP_ERROR_CHECK(volume_control_init());
 
     // Seed the now-playing screen's state so the swap from boot lands on
@@ -157,7 +157,7 @@ void app_main(void)
     xTaskCreate(shuffle_task, "shuffle", 4096, pb_queue, 2, NULL);
 
     // Fetch task on core 0 (alongside Wi-Fi/lwIP), decode+I2S task on
-    // core 1 (set in mp3_player.c) so network jitter doesn't compete
+    // core 1 (set in audio_player.c) so network jitter doesn't compete
     // with audio timing on the same core. Stack bumped to 12 KiB because
     // station_api's HTTPS GET + cJSON parse push http_stream_task's peak
     // usage above what the old 8 KiB left room for.

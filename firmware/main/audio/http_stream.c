@@ -1,6 +1,8 @@
 #include "http_stream.h"
 #include "config.h"
 #include "audio_pipe.h"
+#include "audio_player.h"
+#include "audio_decoder.h"
 #include "network/station_api.h"
 #include "display/screens/now_playing_screen.h"
 
@@ -241,9 +243,10 @@ void http_stream_task(void *pvParameters)
         atomic_store(&s_shuffle_pending, false);
 
         const char *url = NULL;
+        audio_format_t fmt_hint = AUDIO_FORMAT_UNKNOWN;
 #if STREAM_USE_API
         station_info_t station;
-        esp_err_t api_err = station_api_get_random_mp3(&station, api_scratch, sizeof(api_scratch));
+        esp_err_t api_err = station_api_get_random(&station, api_scratch, sizeof(api_scratch));
         if (api_err != ESP_OK) {
             ESP_LOGW(TAG, "no station from API, backing off %u ms", (unsigned)backoff_ms);
             vTaskDelay(pdMS_TO_TICKS(backoff_ms));
@@ -254,6 +257,7 @@ void http_stream_task(void *pvParameters)
         now_playing_set_station(station.name, station.region, station.country, station.genre);
         now_playing_set_track("UNKNOWN TITLE", "UNKNOWN ARTIST");
         url = station.stream_url;
+        fmt_hint = audio_format_from_string(station.format);
 #else
         // TLS-bypass mode: same URL every cycle, so a shuffle press just
         // reconnects to the pinned Italian Dance Network stream. Keeps the
@@ -262,12 +266,15 @@ void http_stream_task(void *pvParameters)
         now_playing_set_station("ITALIAN DANCE NETWORK", "MILAN", "ITALY", "ITALIAN");
         now_playing_set_track("UNKNOWN TITLE", "UNKNOWN ARTIST");
         url = STREAM_URL;
+        fmt_hint = AUDIO_FORMAT_MP3;
 #endif
 
         // Drop any bytes still queued from the previous stream so we don't
         // play a fraction of a second of the old stream before the new one
-        // kicks in.
+        // kicks in, and hand the format hint to the decoder task so it can
+        // swap decoders (or fall back to byte-sniffing on UNKNOWN).
         audio_pipe_reset();
+        audio_player_new_stream(fmt_hint);
 
         ESP_LOGI(TAG, "connecting to %s", url);
         stream_result_t result = stream_once(url);

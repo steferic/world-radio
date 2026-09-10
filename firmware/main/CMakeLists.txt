@@ -6,7 +6,11 @@ idf_component_register(
         "network/station_api.c"
         "audio/audio_pipe.c"
         "audio/http_stream.c"
-        "audio/mp3_player.c"
+        "audio/audio_output.c"
+        "audio/audio_decoder.c"
+        "audio/mp3_decoder.c"
+        "audio/aac_decoder.c"
+        "audio/audio_player.c"
         "input/volume_control.c"
         "input/pushbutton.c"
         "input/rotary_encoder.c"
@@ -32,6 +36,7 @@ idf_component_register(
         mbedtls
         nvs_flash
         minimp3
+        helix-aac
         esp_adc
         json
 )

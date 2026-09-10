@@ -94,7 +94,19 @@ done:
     return out_len;
 }
 
-esp_err_t station_api_get_random_mp3(station_info_t *info, char *scratch, size_t scratch_len) {
+// Whether the firmware can decode a given API `format` string. The list is
+// intentionally narrow so a new codec (OGG, FLAC, HLS) added upstream doesn't
+// silently start streaming to a decoder that can't handle it -- audio_player
+// would then fall back to sniffing/dropping bytes, which is ugly. Better to
+// re-shuffle at the API layer.
+static bool format_is_playable(const char *fmt)
+{
+    if (fmt == NULL) return false;
+    return strcmp(fmt, "mp3") == 0
+        || strcmp(fmt, "aac") == 0;
+}
+
+esp_err_t station_api_get_random(station_info_t *info, char *scratch, size_t scratch_len) {
     if (info == NULL || scratch == NULL || scratch_len < STATION_API_SCRATCH_MIN_BYTES) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -118,14 +130,14 @@ esp_err_t station_api_get_random_mp3(station_info_t *info, char *scratch, size_t
         const cJSON *format = cJSON_GetObjectItemCaseSensitive(root, "format");
         const cJSON *stream_url = cJSON_GetObjectItemCaseSensitive(root, "stream_url");
 
-        bool is_mp3 = cJSON_IsString(format) && format->valuestring
-                      && strcmp(format->valuestring, "mp3") == 0;
+        const char *fmt_str = cJSON_IsString(format) ? format->valuestring : NULL;
+        bool is_playable = format_is_playable(fmt_str);
         bool has_url = cJSON_IsString(stream_url) && stream_url->valuestring
                        && stream_url->valuestring[0] != '\0';
 
-        if (!is_mp3 || !has_url) {
-            const char *got = cJSON_IsString(format) ? format->valuestring : "(missing)";
-            ESP_LOGI(TAG, "attempt %d: skipping non-MP3 stream (format=%s)", attempt, got);
+        if (!is_playable || !has_url) {
+            const char *got = fmt_str ? fmt_str : "(missing)";
+            ESP_LOGI(TAG, "attempt %d: skipping unplayable stream (format=%s)", attempt, got);
             cJSON_Delete(root);
             continue;
         }
@@ -145,6 +157,7 @@ esp_err_t station_api_get_random_mp3(station_info_t *info, char *scratch, size_t
                                  scratch, scratch_len, &cursor);
         info->genre = dup_into(cJSON_IsString(genre) ? genre->valuestring : NULL,
                                scratch, scratch_len, &cursor);
+        info->format = dup_into(fmt_str, scratch, scratch_len, &cursor);
 
         // A stream_url longer than our field-half capacity is a failure.
         if (info->stream_url[0] == '\0') {
@@ -153,13 +166,13 @@ esp_err_t station_api_get_random_mp3(station_info_t *info, char *scratch, size_t
             continue;
         }
 
-        ESP_LOGI(TAG, "picked MP3 station \"%s\" (%s) after %d attempt(s)",
-                 info->name, info->country, attempt);
+        ESP_LOGI(TAG, "picked %s station \"%s\" (%s) after %d attempt(s)",
+                 info->format, info->name, info->country, attempt);
         cJSON_Delete(root);
         return ESP_OK;
     }
 
-    ESP_LOGW(TAG, "gave up after %d attempts without an MP3 stream",
+    ESP_LOGW(TAG, "gave up after %d attempts without a playable stream",
              STATION_API_MAX_ATTEMPTS);
     return ESP_FAIL;
 }
