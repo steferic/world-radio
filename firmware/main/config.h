@@ -98,23 +98,18 @@
 // MADCTL (command 0x36) sets rotation/mirroring. Bit 7=MY (row order),
 // bit 6=MX (column order), bit 5=MV (row/column exchange). Same encoding
 // on ST7789 and ILI9341, but the two panel families are wired to their
-// respective driver chips differently, so a given MADCTL value produces
-// different rotations/mirrors on each. Pick per LCD_CONTROLLER.
+// respective driver chips differently, so the SAME visual rotation needs
+// DIFFERENT MADCTL values on each. Choose properly from the table below.
 //
-// For ST7789 (no-name Chinese 2.4"):
-//   0x00 -- native portrait,        240 wide x 320 tall
-//   0x60 -- rotated 90 deg CW,      320 wide x 240 tall
-//   0xC0 -- rotated 180 deg,        240 wide x 320 tall
-//   0xA0 -- rotated 90 deg CCW,     320 wide x 240 tall
+//                            portrait   90 CW      180        90 CCW
+//                            240x320    320x240    240x320    320x240
+//   ST7789                   0x00       0x60       0xC0       0xA0
+//   ILI9341                  0x00       0x20       0x80       0xE0
 //
-// For ILI9341 (Adafruit 1770): same landscape rotation but with MX
-// cleared -- the ILI9341 panel doesn't need column-address mirroring the
-// way the ST7789 panel does.
-//   0x00 -- native portrait,        240 wide x 320 tall
-//   0x20 -- rotated 90 deg CW,      320 wide x 240 tall  <- current
-//   0x80 -- rotated 180 deg,        240 wide x 320 tall
-//   0xE0 -- rotated 90 deg CCW,     320 wide x 240 tall
-//
-// Changing this WITHOUT updating LCD_WIDTH/LCD_HEIGHT to match will send
-// pixel data outside the panel's actual addressable area in that orientation.
-#define LCD_MADCTL           0x20
+// Changing MADCTL WITHOUT updating LCD_WIDTH/LCD_HEIGHT to match will
+// send pixel data outside the panel's addressable area in that orientation.
+#if LCD_CONTROLLER == LCD_CONTROLLER_ST7789
+    #define LCD_MADCTL       0x60
+#elif LCD_CONTROLLER == LCD_CONTROLLER_ILI9341
+    #define LCD_MADCTL       0x20
+#endif
