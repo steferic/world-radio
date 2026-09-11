@@ -163,8 +163,21 @@ export function createServer() {
         if (!Number.isInteger(streamId) || String(streamId) !== streamIdRaw || streamId < 0) {
           return badReq(res, 'stream_id must be a non-negative integer');
         }
+        // ?offset=N -- resolve the station N steps forward (positive) or
+        // backward (negative) in the flat list from <slug>/<streamId>. Lets a
+        // wildly spun rotary encoder land the correct station in one hop
+        // instead of chasing next_path N times over the network.
+        const offsetRaw = url.searchParams.get('offset');
+        let offset = 0;
+        if (offsetRaw !== null) {
+          const n = Number.parseInt(offsetRaw, 10);
+          if (!Number.isInteger(n) || String(n) !== offsetRaw) {
+            return badReq(res, 'offset must be an integer');
+          }
+          offset = n;
+        }
         if (!demoReady()) return sendJson(res, 503, { error: 'demo list not populated yet' });
-        const station = await getDemoStation(country, streamId);
+        const station = await getDemoStation(country, streamId, offset);
         if (!station) return notFound(res);
         return sendJson(res, 200, await withNowPlaying(station));
       }

@@ -120,22 +120,35 @@ export function getDemoCacheInfo() {
 }
 
 // Position of a station in the flat alphabetical list, and the neighbors on
-// either side (wrapping at the ends). Powers the rotary-encoder "next" walk
-// which is allowed to cross country boundaries.
-function computeNav(slug, streamId) {
+// either side (wrapping at the ends). Powers the rotary-encoder walk which
+// is allowed to cross country boundaries. `offset` shifts the resolved index
+// by N steps (positive = forward, negative = backward, wraps at both ends);
+// omitted / 0 = neighbors of the caller-supplied station, matching the old
+// single-step behavior. The `target` field names where the offset landed.
+function computeNav(slug, streamId, offset = 0) {
   const idx = cache.flat.findIndex(
     (x) => x.country === slug && x.stream_id === streamId,
   );
   if (idx < 0) return null;
   const total = cache.flat.length;
-  const nextRef = cache.flat[(idx + 1) % total];
-  const prevRef = cache.flat[(idx - 1 + total) % total];
+  // JS's % keeps the sign of the dividend, so a naive (idx + offset) % total
+  // can be negative -- add `total` once and re-modulo to force it non-negative.
+  const targetIdx = ((idx + offset) % total + total) % total;
+  const target  = cache.flat[targetIdx];
+  const nextRef = cache.flat[(targetIdx + 1) % total];
+  const prevRef = cache.flat[(targetIdx - 1 + total) % total];
   const toRef = (r) => ({
     country: r.country,
     stream_id: r.stream_id,
     url: `/api/demo/${r.country}/${r.stream_id}`,
   });
-  return { next: toRef(nextRef), prev: toRef(prevRef), position: idx + 1, of: total };
+  return {
+    target: toRef(target),
+    next: toRef(nextRef),
+    prev: toRef(prevRef),
+    position: targetIdx + 1,
+    of: total,
+  };
 }
 
 export async function listCountries() {
@@ -158,17 +171,28 @@ export async function getCountry(slug) {
   };
 }
 
-export async function getDemoStation(slug, streamId) {
+// `offset` (default 0) shifts the returned station N steps forward/backward
+// in the flat list from <slug>/<streamId>. Positive = forward, negative =
+// backward, wraps at both ends. The response describes the destination
+// station (its country/stream_url/etc.), so a client that turns the rotary
+// encoder N times can resolve the whole hop in one round trip.
+export async function getDemoStation(slug, streamId, offset = 0) {
   await ensureFresh();
   const c = cache.bySlug.get(slug);
   if (!c) return null;
   const s = c.streams[streamId];
   if (!s) return null;
-  const nav = computeNav(slug, streamId);
+  const nav = computeNav(slug, streamId, offset);
+  if (!nav) return null;
+  // When offset shifts us to a different flat entry, resolve country/stream
+  // from the target rather than the caller-supplied handle, so the response's
+  // stream_url and country block match `position`/`of`.
+  const targetCountry = cache.bySlug.get(nav.target.country) || c;
+  const targetStream  = targetCountry.streams[nav.target.stream_id] || s;
   return {
-    country: { slug: c.slug, name: c.name },
-    stream_id: s.stream_id,
-    stream_url: s.stream_url,
+    country: { slug: targetCountry.slug, name: targetCountry.name },
+    stream_id: targetStream.stream_id,
+    stream_url: targetStream.stream_url,
     ...nav,
   };
 }
