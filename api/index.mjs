@@ -11,6 +11,6 @@ server.listen(PORT, () => {
     console.warn('[world-radio-api] initial refresh failed:', err.message),
   );
   ensureDemoFresh().catch((err) =>
-    console.warn('[world-radio-api] initial demo refresh failed:', err.message),
+    console.warn('[world-radio-api] demo load failed:', err.message),
   );
 });

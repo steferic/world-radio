@@ -1,52 +1,43 @@
-// Curated "demo" station set for the hardware demo. Independent of the main
-// station cache (which is geo-info-only and dedup'd by rounded coordinate for
-// the globe view) -- the demo wants broad country coverage, not geographic
-// spread. Pulls a large chunk of popular MP3/AAC stations from radio-browser,
-// groups them by country, keeps the top N per country by click count, and
-// sorts countries alphabetically. Rotary-encoder surfing walks the flat
-// alphabetical list, so the last German station's next_id is Ghana #0.
+// Demo endpoint backend. Reads a hand-curated JSON file of country -> [stream
+// URLs] and exposes it via /api/demo. No radio-browser fetching, no format
+// classifier, no metadata storage: the file is the source of truth, and the
+// MCU reads codec/name/bitrate from each stream's own ICY headers at play
+// time.
+//
+// File shape (see api/data/demo_stations.json):
+//   {
+//     "countries": {
+//       "<slug>": { "name": "<display name>", "streams": ["<url>", ...] },
+//       ...
+//     }
+//   }
+//
+// Countries with an empty streams array are dropped at load so a fully
+// pre-populated template stays readable while the API only shows what's
+// actually filled in. The file is loaded once at boot and never refreshed;
+// edit the file, restart the API.
 
-import { classifyFormat } from './stations.mjs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const RADIO_BROWSER_HOSTS = [
-  'de1.api.radio-browser.info',
-  'at1.api.radio-browser.info',
-  'nl1.api.radio-browser.info',
-];
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_PATH = resolve(__dirname, '../data/demo_stations.json');
 
-// hidebroken=true skips stations whose last uptime check failed -- our proxy
-// for "confirmed stable". Ordering by clickcount gives us popularity.
-// limit=5000 is generous so grouping-by-country still yields decent coverage
-// after we filter to MP3/AAC and cap per country.
-const DEMO_SEARCH_PATH =
-  '/json/stations/search?hidebroken=true&order=clickcount&reverse=true&limit=5000';
-
-const USER_AGENT = 'WorldRadioAPI/1.0 (+https://github.com/bkelldog/world-radio)';
-
-// Demo list is more expensive to build (larger upstream fetch) and changes
-// slowly, so hold it longer than the main cache.
-const CACHE_TTL_MS = 30 * 60 * 1000;
-const UPSTREAM_TIMEOUT_MS = 10000;
-
-// Curation knobs. Tuned for "handful per country, decent quality" -- easy to
-// nudge if the demo needs more/fewer stations.
-const STATIONS_PER_COUNTRY = 3;
-const MIN_BITRATE = 48;
-
-let cache = {
-  countries: [],       // ordered alphabetically by name
-  bySlug: new Map(),   // slug -> country object with .stations
-  flat: [],            // flat list of { country, stream_id } for cross-country nav
-  fetchedAt: 0,
+const cache = {
+  countries: [],   // [{ slug, name, streams: [{ stream_id, stream_url }] }]
+  bySlug: new Map(),
+  flat: [],        // [{ country: slug, stream_id }] in surf order
+  loadedAt: 0,
+  fileMtimeMs: 0,
   lastError: null,
 };
 
-let inflight = null;
-
-// URL-safe country identifier. Strips diacritics (Côte d'Ivoire -> cote-d-ivoire)
-// so the MCU can build request paths without worrying about UTF-8 encoding.
+// URL-safe slugifier -- matches what a human editor would naturally type
+// (lowercase, ASCII, hyphens). Accents are stripped so a hand-authored key
+// like "cote-d-ivoire" lines up with the display name "Côte d'Ivoire".
 function toSlug(name) {
-  return name
+  return String(name)
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -54,118 +45,83 @@ function toSlug(name) {
     .replace(/^-+|-+$/g, '');
 }
 
-function normalize(raw) {
-  const stream_url = raw.url_resolved || raw.url;
-  if (!stream_url) return null;
-  const format = classifyFormat(raw);
-  if (!format) return null;
-  const country = (raw.country || '').trim();
-  if (!country) return null;
-  if ((raw.bitrate || 0) < MIN_BITRATE) return null;
-
-  return {
-    uuid: raw.stationuuid,
-    name: (raw.name || 'Unknown').trim().slice(0, 60),
-    country,
-    country_code: raw.countrycode || '',
-    genre: (raw.tags || '').split(',')[0].trim(),
-    codec: raw.codec || '',
-    format,
-    bitrate: raw.bitrate || 0,
-    clickcount: raw.clickcount || 0,
-    stream_url,
-    homepage: raw.homepage || '',
-  };
-}
-
-async function fetchWithFallback() {
-  let lastErr;
-  for (const host of RADIO_BROWSER_HOSTS) {
-    try {
-      const res = await fetch(`https://${host}${DEMO_SEARCH_PATH}`, {
-        headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      });
-      if (!res.ok) throw new Error(`${host}: HTTP ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      lastErr = err;
-    }
+function load() {
+  if (!existsSync(DATA_PATH)) {
+    throw new Error(
+      `${DATA_PATH} not found. Create it with the shape:\n` +
+      `  { "countries": { "<slug>": { "name": "<name>", "streams": ["<url>", ...] } } }`,
+    );
   }
-  throw lastErr || new Error('all upstream hosts failed');
-}
-
-async function refresh() {
-  const raw = await fetchWithFallback();
-
-  // Bucket by country name. Upstream is already sorted by clickcount desc,
-  // so each bucket's head is the country's most popular qualifying station.
-  const buckets = new Map();
-  for (const r of raw) {
-    const s = normalize(r);
-    if (!s) continue;
-    if (!buckets.has(s.country)) buckets.set(s.country, []);
-    buckets.get(s.country).push(s);
+  const raw = JSON.parse(readFileSync(DATA_PATH, 'utf8'));
+  if (!raw || typeof raw !== 'object' || !raw.countries || typeof raw.countries !== 'object') {
+    throw new Error(`${DATA_PATH}: expected { "countries": { ... } } at top level`);
   }
 
-  // Take top N per country, drop countries with zero survivors, then sort
-  // countries alphabetically by name (localeCompare handles accents sensibly).
   const countries = [];
-  for (const [name, stations] of buckets) {
-    const top = stations.slice(0, STATIONS_PER_COUNTRY);
-    if (top.length === 0) continue;
-    top.forEach((s, i) => { s.stream_id = i; });
+  for (const [rawKey, val] of Object.entries(raw.countries)) {
+    if (!val || !Array.isArray(val.streams)) continue;
+    const streams = val.streams
+      .filter((u) => typeof u === 'string' && u.trim())
+      .map((u, i) => ({ stream_id: i, stream_url: u.trim() }));
+    if (streams.length === 0) continue; // hide empty-country template entries
     countries.push({
-      slug: toSlug(name),
-      name,
-      country_code: top[0].country_code,
-      stations: top,
+      slug: toSlug(rawKey),
+      name: (val.name || rawKey).trim(),
+      streams,
     });
   }
+  // Sort by display name so alphabetical surfing is by what the user sees,
+  // not by the underlying slug (e.g. "Côte d'Ivoire" vs "cote-d-ivoire").
   countries.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Flat list so cross-country next/prev is an O(1) index lookup at read time.
   const flat = [];
   for (const c of countries) {
-    for (const s of c.stations) flat.push({ country: c.slug, stream_id: s.stream_id });
+    for (const s of c.streams) flat.push({ country: c.slug, stream_id: s.stream_id });
   }
 
-  cache = {
-    countries,
-    bySlug: new Map(countries.map((c) => [c.slug, c])),
-    flat,
-    fetchedAt: Date.now(),
-    lastError: null,
-  };
+  cache.countries = countries;
+  cache.bySlug = new Map(countries.map((c) => [c.slug, c]));
+  cache.flat = flat;
+  cache.loadedAt = Date.now();
+  cache.fileMtimeMs = statSync(DATA_PATH).mtimeMs;
+  cache.lastError = null;
 }
 
+// Kept for interface compatibility with the main stations cache. The demo
+// data doesn't refresh; it's a one-shot load on first request (or on boot
+// via index.mjs). Errors are surfaced only if the cache is empty -- once
+// loaded successfully, a subsequent broken file just leaves us serving the
+// last good version.
 export async function ensureFresh() {
-  if (Date.now() - cache.fetchedAt <= CACHE_TTL_MS) return;
-  if (!inflight) {
-    inflight = refresh()
-      .catch((err) => {
-        cache.lastError = err.message;
-        if (cache.countries.length === 0) throw err;
-      })
-      .finally(() => { inflight = null; });
-  }
-  await inflight;
+  if (cache.countries.length > 0) return;
+  try { load(); }
+  catch (err) { cache.lastError = err.message; throw err; }
 }
 
-// Slim shape for country list responses: no stream_url (encourages clients to
-// go through /:country/:id which computes nav), no homepage, no clickcount.
-function slim(s) {
+// Convenience for the reviewer / other tooling: force a reload without
+// bouncing the whole server, e.g. after the reviewer mutates the file.
+export function reload() {
+  try { load(); return { ok: true }; }
+  catch (err) { cache.lastError = err.message; return { ok: false, error: err.message }; }
+}
+
+export function isReady() {
+  return cache.countries.length > 0;
+}
+
+export function getDemoCacheInfo() {
   return {
-    stream_id: s.stream_id,
-    uuid: s.uuid,
-    name: s.name,
-    genre: s.genre,
-    codec: s.codec,
-    format: s.format,
-    bitrate: s.bitrate,
+    countries: cache.countries.length,
+    streams: cache.flat.length,
+    loadedAt: cache.loadedAt ? new Date(cache.loadedAt).toISOString() : null,
+    fileMtime: cache.fileMtimeMs ? new Date(cache.fileMtimeMs).toISOString() : null,
+    lastError: cache.lastError,
   };
 }
 
+// Position of a station in the flat alphabetical list, and the neighbors on
+// either side (wrapping at the ends). Powers the rotary-encoder "next" walk
+// which is allowed to cross country boundaries.
 function computeNav(slug, streamId) {
   const idx = cache.flat.findIndex(
     (x) => x.country === slug && x.stream_id === streamId,
@@ -187,8 +143,7 @@ export async function listCountries() {
   return cache.countries.map((c) => ({
     slug: c.slug,
     name: c.name,
-    country_code: c.country_code,
-    count: c.stations.length,
+    count: c.streams.length,
   }));
 }
 
@@ -199,8 +154,7 @@ export async function getCountry(slug) {
   return {
     slug: c.slug,
     name: c.name,
-    country_code: c.country_code,
-    stations: c.stations.map(slim),
+    streams: c.streams.map((s) => ({ stream_id: s.stream_id, stream_url: s.stream_url })),
   };
 }
 
@@ -208,30 +162,13 @@ export async function getDemoStation(slug, streamId) {
   await ensureFresh();
   const c = cache.bySlug.get(slug);
   if (!c) return null;
-  const s = c.stations[streamId];
+  const s = c.streams[streamId];
   if (!s) return null;
   const nav = computeNav(slug, streamId);
-  // Strip the station's raw `country`/`country_code` -- we replace them with a
-  // richer nested object (slug + display name + code) so the MCU doesn't have
-  // to slugify anything itself.
-  const { country: _c, country_code: _cc, ...rest } = s;
   return {
-    country: { slug: c.slug, name: c.name, country_code: c.country_code },
-    ...rest,
+    country: { slug: c.slug, name: c.name },
+    stream_id: s.stream_id,
+    stream_url: s.stream_url,
     ...nav,
-  };
-}
-
-export function isReady() {
-  return cache.countries.length > 0;
-}
-
-export function getDemoCacheInfo() {
-  return {
-    countries: cache.countries.length,
-    stations: cache.flat.length,
-    fetchedAt: cache.fetchedAt ? new Date(cache.fetchedAt).toISOString() : null,
-    ageMs: cache.fetchedAt ? Date.now() - cache.fetchedAt : null,
-    lastError: cache.lastError,
   };
 }

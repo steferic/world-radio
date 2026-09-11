@@ -91,7 +91,10 @@ async function scrape(streamUrl) {
 
 export async function getNowPlaying(station) {
   if (!station || !station.stream_url) return null;
-  const key = station.uuid;
+  // Main /api/stations entries carry a uuid from radio-browser; demo
+  // entries don't (they're just URLs the user typed) so fall back to the
+  // stream URL itself as the cache key. Uniqueness is preserved either way.
+  const key = station.uuid || station.stream_url;
   const now = Date.now();
   const entry = cache.get(key);
   if (entry) {
